@@ -1,6 +1,5 @@
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
-const cors = require('cors');
 const app = express();
 
 const BOT_TOKEN = '8655058369:AAGo-4rFve2eK21RbVk6CXc6e2_wwbrLCCQ';
@@ -8,7 +7,14 @@ const ADMIN_ID = '7482625921';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 app.use(express.json());
-app.use(cors());
+
+// Enable CORS manually without external package
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    next();
+});
 
 let users = {};
 let pendingRequests = {};
