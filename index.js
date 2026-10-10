@@ -115,14 +115,14 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
             // --- Admin Panel Command ---
             if (text === '/admin') {
                 if (chatId !== String(ADMIN_ID)) return;
-                await sendTelegramMessage(chatId, "👑 **Admin Panel Commands:**\n\n`/users` - Check Total Users\n`/user <id>` - Check User Details\n`/addbal <id> <amount>` - Add Balance\n`/cutbal <id> <amount>` - Cut Balance\n`/broadcast <message>` - Send to All");
+                await sendTelegramMessage(chatId, "👑 **Admin Panel Commands:**\n\n📊 `/stats` - Total Bot Users\n👤 `/user <id>` - Check User Details\n➕ `/addbal <id> <amount>` - Add Balance\n➖ `/cutbal <id> <amount>` - Cut Balance\n📢 `/broadcast <message>` - Send to All");
             }
 
-            // --- Admin: Check Total Users ---
-            if (text === '/users') {
+            // --- Admin: Total Users Check (/stats) ---
+            if (text === '/stats') {
                 if (chatId !== String(ADMIN_ID)) return;
                 const totalUsers = Object.keys(users).length;
-                await sendTelegramMessage(chatId, `📊 **Total Bot Users:** ${totalUsers}`);
+                await sendTelegramMessage(chatId, `📊 **Bot Statistics:**\n\n👥 **Total Registered Users:** ${totalUsers}`);
             }
 
             // --- Admin: Check User ---
@@ -336,4 +336,48 @@ app.post('/api/deposit', async (req, res) => {
         ]
     };
 
-    await send
+    await sendTelegramMessage(ADMIN_ID, msgText, keyboard);
+    res.json({ success: true, message: "Deposit request submitted successfully" });
+});
+
+// Withdraw API
+app.post('/api/withdraw', async (req, res) => {
+    const { userId, username, amount, address } = req.body;
+    if (!userId || !amount || !address) return res.status(400).json({ success: false, message: "Missing data" });
+
+    if (!users[userId] || users[userId].balance < parseFloat(amount)) {
+        return res.status(400).json({ success: false, message: "Insufficient balance" });
+    }
+
+    const reqId = 'wd_' + Date.now();
+    const withdrawItem = { id: reqId, amount: amount, address: address, status: 'PENDING', date: new Date().toLocaleDateString() };
+
+    users[userId].withdrawals.unshift(withdrawItem);
+    pendingRequests[reqId] = { type: 'withdraw', userId: userId, amount: amount, address: address, reqId: reqId };
+
+    const msgText = `📤 **New Withdrawal Request**\n\n` +
+                    `👤 **User:** ${username || userId} (ID: \`${userId}\`)\n` +
+                    `💰 **Amount:** ${amount} USDT\n` +
+                    `🏦 **Wallet Address:** \`${address}\``;
+
+    const keyboard = {
+        inline_keyboard: [
+            [{ text: "✅ Approve", callback_data: `approve_${reqId}` }, { text: "❌ Reject", callback_data: `reject_${reqId}` }]
+        ]
+    };
+
+    await sendTelegramMessage(ADMIN_ID, msgText, keyboard);
+    res.json({ success: true, message: "Withdrawal request submitted successfully" });
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, async () => {
+    console.log(`Server running on port ${PORT}`);
+    const RENDER_URL = "https://bitharvest-qtyp.onrender.com";
+    try {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/api/webhook/${BOT_TOKEN}`);
+        console.log("Telegram Webhook Set Successfully!");
+    } catch (e) {
+        console.log("Failed to set webhook:", e);
+    }
+});
