@@ -27,6 +27,7 @@ bot.onText(/\/start (.+)?/, (msg, match) => {
     if (!users[chatId]) {
         users[chatId] = {
             id: chatId,
+            username: msg.chat.username || msg.chat.first_name || 'User',
             balance: 0,
             ghs: 0,
             deposits: [],
@@ -44,7 +45,7 @@ bot.onText(/\/start (.+)?/, (msg, match) => {
     bot.sendMessage(chatId, "🚀 Welcome to BitHarvest USDT Mining Mini App!", {
         reply_markup: {
             inline_keyboard: [
-                [{ text: "⛏️ Open Mining App", web_app: { url: "https://your-netlify-app-url.netlify.app" } }]
+                [{ text: "⛏️ Open Mining App", web_app: { url: "https://bitharvest.netlify.app" } }]
             ]
         }
     });
@@ -64,7 +65,7 @@ bot.onText(/\/user(?:\s+(.+))?/, (msg, match) => {
     const u = users[targetId];
     if (!u) return bot.sendMessage(msg.chat.id, "User not found!");
 
-    bot.sendMessage(msg.chat.id, `👤 **User Info (${targetId})**\nBalance: ${u.balance} USDT\nGHS Power: ${u.ghs}\nReferred By: ${u.referredBy || 'None'}\nLevel 1 Referrals: ${u.referrals.level1.length}`);
+    bot.sendMessage(msg.chat.id, `👤 **User Info (${targetId})**\nUsername: @${u.username \vert{}\vert{} 'None'}\nBalance:${u.balance} USDT\nGHS Power: ${u.ghs}\nReferred By:${u.referredBy || 'None'}`);
 });
 
 // Add Balance Command
@@ -77,7 +78,7 @@ bot.onText(/\/addbal(?:\s+(\d+)\s+(.+))?/, (msg, match) => {
     if (!users[targetId]) return bot.sendMessage(msg.chat.id, "User not found in database!");
     
     users[targetId].balance += amount;
-    bot.sendMessage(msg.chat.id, `✅ Successfully added ${amount} USDT to User ${targetId}`);
+    bot.sendMessage(msg.chat.id, `✅ Successfully added ${amount} USDT to User${targetId}`);
     bot.sendMessage(targetId, `💰 Admin added ${amount} USDT to your balance!`).catch(() => {});
 });
 
@@ -91,7 +92,7 @@ bot.onText(/\/cutbal(?:\s+(\d+)\s+(.+))?/, (msg, match) => {
     if (!users[targetId]) return bot.sendMessage(msg.chat.id, "User not found in database!");
     
     users[targetId].balance -= amount;
-    bot.sendMessage(msg.chat.id, `✅ Successfully deducted ${amount} USDT from User ${targetId}`);
+    bot.sendMessage(msg.chat.id, `✅ Successfully deducted ${amount} USDT from User${targetId}`);
     bot.sendMessage(targetId, `⚠️ Admin deducted ${amount} USDT from your balance.`).catch(() => {});
 });
 
@@ -116,6 +117,7 @@ app.get('/api/user/:userId', (req, res) => {
     if (!users[userId]) {
         users[userId] = {
             id: userId,
+            username: 'User',
             balance: 0,
             ghs: 0,
             deposits: [],
@@ -129,20 +131,26 @@ app.get('/api/user/:userId', (req, res) => {
 
 // Deposit API from Mini App
 app.post('/api/deposit', (req, res) => {
-    const { userId, amount } = req.body;
+    const { userId, username, amount, txHash } = req.body;
     if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
 
     if (!users[userId]) {
-        users[userId] = { id: userId, balance: 0, ghs: 0, deposits: [], withdrawals: [], referredBy: null, referrals: { level1: [], level2: [], level3: [] } };
+        users[userId] = { id: userId, username: username || 'User', balance: 0, ghs: 0, deposits: [], withdrawals: [], referredBy: null, referrals: { level1: [], level2: [], level3: [] } };
     }
 
     const reqId = 'dep_' + Date.now();
-    const depositItem = { id: reqId, amount: amount, status: 'PENDING', date: new Date().toLocaleDateString() };
+    const depositItem = { id: reqId, amount: amount, txHash: txHash, status: 'PENDING', date: new Date().toLocaleDateString() };
     
     users[userId].deposits.unshift(depositItem);
-    pendingRequests[reqId] = { type: 'deposit', userId: userId, amount: amount, reqId: reqId };
+    pendingRequests[reqId] = { type: 'deposit', userId: userId, amount: amount, txHash: txHash, reqId: reqId };
 
-    bot.sendMessage(ADMIN_ID, `📥 **New Deposit Request from Mini App**\n\nUser ID: ${userId}\nAmount: ${amount} USDT`, {
+    const msgText = `📥 **New Deposit Request**\n\n` +
+                    `👤 **User:** ${username || userId} (ID: \`${userId}\`)\n` +
+                    `💰 **Amount:** ${amount} USDT\n` +
+                    `🔑 **TxHash:** \`${txHash}\``;
+
+    bot.sendMessage(ADMIN_ID, msgText, {
+        parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
                 [
@@ -158,20 +166,26 @@ app.post('/api/deposit', (req, res) => {
 
 // Withdraw API from Mini App
 app.post('/api/withdraw', (req, res) => {
-    const { userId, amount } = req.body;
-    if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
+    const { userId, username, amount, address } = req.body;
+    if (!userId || !amount || !address) return res.status(400).json({ success: false, message: "Missing data" });
 
     if (!users[userId] || users[userId].balance < parseFloat(amount)) {
         return res.status(400).json({ success: false, message: "Insufficient balance" });
     }
 
     const reqId = 'wd_' + Date.now();
-    const withdrawItem = { id: reqId, amount: amount, status: 'PENDING', date: new Date().toLocaleDateString() };
+    const withdrawItem = { id: reqId, amount: amount, address: address, status: 'PENDING', date: new Date().toLocaleDateString() };
 
     users[userId].withdrawals.unshift(withdrawItem);
-    pendingRequests[reqId] = { type: 'withdraw', userId: userId, amount: amount, reqId: reqId };
+    pendingRequests[reqId] = { type: 'withdraw', userId: userId, amount: amount, address: address, reqId: reqId };
 
-    bot.sendMessage(ADMIN_ID, `📤 **New Withdrawal Request from Mini App**\n\nUser ID: ${userId}\nAmount: ${amount} USDT`, {
+    const msgText = `📤 **New Withdrawal Request**\n\n` +
+                    `👤 **User:** ${username || userId} (ID: \`${userId}\`)\n` +
+                    `💰 **Amount:** ${amount} USDT\n` +
+                    `🏦 **Wallet Address:** \`${address}\``;
+
+    bot.sendMessage(ADMIN_ID, msgText, {
+        parse_mode: 'Markdown',
         reply_markup: {
             inline_keyboard: [
                 [
@@ -208,21 +222,21 @@ bot.on('callback_query', async (query) => {
         if (isApprove) {
             if (req.type === 'deposit') {
                 if (u) {
-                    u.balance += parseFloat(req.amount);
-                    u.ghs += parseFloat(req.amount); // GHS Power increases on deposit
+                    // Increases GHS Mining Power instead of Main Balance
+                    u.ghs += parseFloat(req.amount);
                     const dep = u.deposits.find(d => d.id === req.reqId);
                     if (dep) dep.status = 'PAID';
                 }
-                bot.sendMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved and added to your balance & mining power!`);
+                bot.sendMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved! ${req.amount} GHS Power added to your account.`);
             } else if (req.type === 'withdraw') {
                 if (u) {
                     u.balance -= parseFloat(req.amount);
                     const wd = u.withdrawals.find(w => w.id === req.reqId);
                     if (wd) wd.status = 'PAID';
                 }
-                bot.sendMessage(req.userId, `✅ Your withdrawal of ${req.amount} USDT has been approved and processed!`);
+                bot.sendMessage(req.userId, `✅ Your withdrawal of ${req.amount} USDT has been approved and sent to your wallet!`);
             }
-            bot.editMessageText(`✅ **Request Approved**\nUser: ${req.userId}\nAmount: ${req.amount} USDT`, {
+            bot.editMessageText(`✅ **Request Approved**\nUser ID: ${req.userId}\nAmount: ${req.amount} USDT`, {
                 chat_id: chatId,
                 message_id: query.message.message_id
             });
@@ -240,7 +254,7 @@ bot.on('callback_query', async (query) => {
                 }
                 bot.sendMessage(req.userId, `❌ Your withdrawal request of ${req.amount} USDT was rejected by admin.`);
             }
-            bot.editMessageText(`❌ **Request Rejected**\nUser: ${req.userId}\nAmount: ${req.amount} USDT`, {
+            bot.editMessageText(`❌ **Request Rejected**\nUser ID: ${req.userId}\nAmount: ${req.amount} USDT`, {
                 chat_id: chatId,
                 message_id: query.message.message_id
             });
