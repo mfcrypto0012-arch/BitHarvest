@@ -23,6 +23,8 @@ bot.onText(/\/start (.+)?/, (msg, match) => {
             id: chatId,
             balance: 0,
             ghs: 0,
+            deposits: [],
+            withdrawals: [],
             referredBy: referrerId || null,
             referrals: { level1: [], level2: [], level3: [] }
         };
@@ -36,8 +38,7 @@ bot.onText(/\/start (.+)?/, (msg, match) => {
     bot.sendMessage(chatId, "🚀 Welcome to BitHarvest USDT Mining Mini App!", {
         reply_markup: {
             inline_keyboard: [
-                [{ text: "⛏️ Open Mining App", web_app: { url: "YOUR_NETLIFY_APP_URL" } }],
-                [{ text: "💰 Deposit", callback_data: "menu_deposit" }, { text: "📤 Withdraw", callback_data: "menu_withdraw" }]
+                [{ text: "⛏️ Open Mining App", web_app: { url: "YOUR_NETLIFY_APP_URL" } }]
             ]
         }
     });
@@ -103,17 +104,37 @@ bot.onText(/\/broadcast(?:\s+(.+))?/, (msg, match) => {
     bot.sendMessage(msg.chat.id, `✅ Broadcast sent to ${count} users!`);
 });
 
-// Web App (Netlify) API Endpoints for Deposit and Withdraw
+// API to get user data for Mini App
+app.get('/api/user/:userId', (req, res) => {
+    const userId = req.params.userId;
+    if (!users[userId]) {
+        users[userId] = {
+            id: userId,
+            balance: 0,
+            ghs: 0,
+            deposits: [],
+            withdrawals: [],
+            referredBy: null,
+            referrals: { level1: [], level2: [], level3: [] }
+        };
+    }
+    res.json(users[userId]);
+});
+
+// Deposit API from Mini App
 app.post('/api/deposit', (req, res) => {
     const { userId, amount } = req.body;
     if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
 
     if (!users[userId]) {
-        users[userId] = { id: userId, balance: 0, ghs: 0, referredBy: null, referrals: { level1: [], level2: [], level3: [] } };
+        users[userId] = { id: userId, balance: 0, ghs: 0, deposits: [], withdrawals: [], referredBy: null, referrals: { level1: [], level2: [], level3: [] } };
     }
 
     const reqId = 'dep_' + Date.now();
-    pendingRequests[reqId] = { type: 'deposit', userId: userId, amount: amount };
+    const depositItem = { id: reqId, amount: amount, status: 'PENDING', date: new Date().toLocaleDateString() };
+    
+    users[userId].deposits.push(depositItem);
+    pendingRequests[reqId] = { type: 'deposit', userId: userId, amount: amount, reqId: reqId };
 
     bot.sendMessage(ADMIN_ID, `📥 **New Deposit Request from Mini App**\n\nUser ID: ${userId}\nAmount: ${amount} USDT`, {
         reply_markup: {
@@ -129,6 +150,7 @@ app.post('/api/deposit', (req, res) => {
     res.json({ success: true, message: "Deposit request submitted successfully" });
 });
 
+// Withdraw API from Mini App
 app.post('/api/withdraw', (req, res) => {
     const { userId, amount } = req.body;
     if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
@@ -138,7 +160,10 @@ app.post('/api/withdraw', (req, res) => {
     }
 
     const reqId = 'wd_' + Date.now();
-    pendingRequests[reqId] = { type: 'withdraw', userId: userId, amount: amount };
+    const withdrawItem = { id: reqId, amount: amount, status: 'PENDING', date: new Date().toLocaleDateString() };
+
+    users[userId].withdrawals.push(withdrawItem);
+    pendingRequests[reqId] = { type: 'withdraw', userId: userId, amount: amount, reqId: reqId };
 
     bot.sendMessage(ADMIN_ID, `📤 **New Withdrawal Request from Mini App**\n\nUser ID: ${userId}\nAmount: ${amount} USDT`, {
         reply_markup: {
@@ -159,13 +184,6 @@ bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
     const data = query.data;
 
-    if (data === 'menu_deposit') {
-        return bot.sendMessage(chatId, "💡 To deposit, please open the Mining Mini App.");
-    }
-    if (data === 'menu_withdraw') {
-        return bot.sendMessage(chatId, "💡 To withdraw, please open the Mining Mini App.");
-    }
-
     if (data.startsWith('approve_') || data.startsWith('reject_')) {
         if (String(chatId) !== String(ADMIN_ID)) {
             return bot.answerCallbackQuery(query.id, { text: "Unauthorized!" });
@@ -179,16 +197,21 @@ bot.on('callback_query', async (query) => {
             return bot.answerCallbackQuery(query.id, { text: "Request already handled or expired!" });
         }
 
+        const u = users[req.userId];
+
         if (isApprove) {
             if (req.type === 'deposit') {
-                if (!users[req.userId]) {
-                    users[req.userId] = { id: req.userId, balance: 0, ghs: 0, referredBy: null, referrals: { level1: [], level2: [], level3: [] } };
+                if (u) {
+                    u.balance += parseFloat(req.amount);
+                    const dep = u.deposits.find(d => d.id === req.reqId);
+                    if (dep) dep.status = 'PAID';
                 }
-                users[req.userId].balance += parseFloat(req.amount);
                 bot.sendMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved and added to your balance!`);
             } else if (req.type === 'withdraw') {
-                if (users[req.userId]) {
-                    users[req.userId].balance -= parseFloat(req.amount);
+                if (u) {
+                    u.balance -= parseFloat(req.amount);
+                    const wd = u.withdrawals.find(w => w.id === req.reqId);
+                    if (wd) wd.status = 'PAID';
                 }
                 bot.sendMessage(req.userId, `✅ Your withdrawal of ${req.amount} USDT has been approved and processed!`);
             }
@@ -198,8 +221,16 @@ bot.on('callback_query', async (query) => {
             });
         } else {
             if (req.type === 'deposit') {
+                if (u) {
+                    const dep = u.deposits.find(d => d.id === req.reqId);
+                    if (dep) dep.status = 'DECLINED';
+                }
                 bot.sendMessage(req.userId, `❌ Your deposit request of ${req.amount} USDT was rejected by admin.`);
             } else if (req.type === 'withdraw') {
+                if (u) {
+                    const wd = u.withdrawals.find(w => w.id === req.reqId);
+                    if (wd) wd.status = 'DECLINED';
+                }
                 bot.sendMessage(req.userId, `❌ Your withdrawal request of ${req.amount} USDT was rejected by admin.`);
             }
             bot.editMessageText(`❌ **Request Rejected**\nUser: ${req.userId}\nAmount: ${req.amount} USDT`, {
