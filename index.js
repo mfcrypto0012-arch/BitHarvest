@@ -1,5 +1,6 @@
 const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
+const cors = require('cors');
 const app = express();
 
 const BOT_TOKEN = '8655058369:AAGo-4rFve2eK21RbVk6CXc6e2_wwbrLCCQ';
@@ -7,10 +8,12 @@ const ADMIN_ID = '7482625921';
 
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 app.use(express.json());
+app.use(cors());
 
 let users = {};
 let pendingRequests = {};
 
+// Telegram /start command
 bot.onText(/\/start (.+)?/, (msg, match) => {
     const chatId = msg.chat.id;
     const referrerId = match[1];
@@ -40,11 +43,13 @@ bot.onText(/\/start (.+)?/, (msg, match) => {
     });
 });
 
+// Admin Panel Command
 bot.onText(/\/admin/, (msg) => {
     if (String(msg.chat.id) !== String(ADMIN_ID)) return;
     bot.sendMessage(msg.chat.id, "👑 **Admin Panel**\n\nCommands:\n/user <id> - Check User Details\n/addbal <id> <amount> - Add Balance\n/cutbal <id> <amount> - Cut Balance\n/broadcast <message> - Send to All Users");
 });
 
+// Check User Details Command
 bot.onText(/\/user(?:\s+(.+))?/, (msg, match) => {
     if (String(msg.chat.id) !== String(ADMIN_ID)) return;
     const targetId = match[1];
@@ -55,6 +60,7 @@ bot.onText(/\/user(?:\s+(.+))?/, (msg, match) => {
     bot.sendMessage(msg.chat.id, `👤 **User Info (${targetId})**\nBalance: ${u.balance} USDT\nGHS Power: ${u.ghs}\nReferred By: ${u.referredBy || 'None'}\nLevel 1 Referrals: ${u.referrals.level1.length}`);
 });
 
+// Add Balance Command
 bot.onText(/\/addbal(?:\s+(\d+)\s+(.+))?/, (msg, match) => {
     if (String(msg.chat.id) !== String(ADMIN_ID)) return;
     const targetId = match[1];
@@ -68,6 +74,7 @@ bot.onText(/\/addbal(?:\s+(\d+)\s+(.+))?/, (msg, match) => {
     bot.sendMessage(targetId, `💰 Admin added ${amount} USDT to your balance!`).catch(() => {});
 });
 
+// Cut Balance Command
 bot.onText(/\/cutbal(?:\s+(\d+)\s+(.+))?/, (msg, match) => {
     if (String(msg.chat.id) !== String(ADMIN_ID)) return;
     const targetId = match[1];
@@ -81,6 +88,7 @@ bot.onText(/\/cutbal(?:\s+(\d+)\s+(.+))?/, (msg, match) => {
     bot.sendMessage(targetId, `⚠️ Admin deducted ${amount} USDT from your balance.`).catch(() => {});
 });
 
+// Broadcast Command
 bot.onText(/\/broadcast(?:\s+(.+))?/, (msg, match) => {
     if (String(msg.chat.id) !== String(ADMIN_ID)) return;
     const text = match[1];
@@ -95,19 +103,19 @@ bot.onText(/\/broadcast(?:\s+(.+))?/, (msg, match) => {
     bot.sendMessage(msg.chat.id, `✅ Broadcast sent to ${count} users!`);
 });
 
-bot.onText(/\/deposit(?:\s+(.+))?/, (msg, match) => {
-    const chatId = msg.chat.id;
-    const amount = match[1];
-    if (!amount) {
-        return bot.sendMessage(chatId, "💡 **How to Deposit:**\nSend your deposit amount like this:\n`/deposit 10`\n(Min: 5 USDT, BEP-20 Network)");
+// Web App (Netlify) API Endpoints for Deposit and Withdraw
+app.post('/api/deposit', (req, res) => {
+    const { userId, amount } = req.body;
+    if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
+
+    if (!users[userId]) {
+        users[userId] = { id: userId, balance: 0, ghs: 0, referredBy: null, referrals: { level1: [], level2: [], level3: [] } };
     }
 
     const reqId = 'dep_' + Date.now();
-    pendingRequests[reqId] = { type: 'deposit', userId: chatId, amount: amount };
+    pendingRequests[reqId] = { type: 'deposit', userId: userId, amount: amount };
 
-    bot.sendMessage(chatId, `⏳ Deposit request of ${amount} USDT submitted! Please wait for admin approval.`);
-    
-    bot.sendMessage(ADMIN_ID, `📥 **New Deposit Request**\n\nUser ID: ${chatId}\nAmount: ${amount} USDT`, {
+    bot.sendMessage(ADMIN_ID, `📥 **New Deposit Request from Mini App**\n\nUser ID: ${userId}\nAmount: ${amount} USDT`, {
         reply_markup: {
             inline_keyboard: [
                 [
@@ -117,25 +125,22 @@ bot.onText(/\/deposit(?:\s+(.+))?/, (msg, match) => {
             ]
         }
     });
+
+    res.json({ success: true, message: "Deposit request submitted successfully" });
 });
 
-bot.onText(/\/withdraw(?:\s+(.+))?/, (msg, match) => {
-    const chatId = msg.chat.id;
-    const amount = match[1];
-    if (!amount) {
-        return bot.sendMessage(chatId, "💡 **How to Withdraw:**\nSend your withdrawal amount like this:\n`/withdraw 10`\n(Min: 10 USDT)");
-    }
+app.post('/api/withdraw', (req, res) => {
+    const { userId, amount } = req.body;
+    if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
 
-    if (!users[chatId] || users[chatId].balance < parseFloat(amount)) {
-        return bot.sendMessage(chatId, "❌ Insufficient balance for withdrawal!");
+    if (!users[userId] || users[userId].balance < parseFloat(amount)) {
+        return res.status(400).json({ success: false, message: "Insufficient balance" });
     }
 
     const reqId = 'wd_' + Date.now();
-    pendingRequests[reqId] = { type: 'withdraw', userId: chatId, amount: amount };
+    pendingRequests[reqId] = { type: 'withdraw', userId: userId, amount: amount };
 
-    bot.sendMessage(chatId, `⏳ Withdrawal request of ${amount} USDT submitted! Please wait for admin approval.`);
-    
-    bot.sendMessage(ADMIN_ID, `📤 **New Withdrawal Request**\n\nUser ID: ${chatId}\nAmount: ${amount} USDT`, {
+    bot.sendMessage(ADMIN_ID, `📤 **New Withdrawal Request from Mini App**\n\nUser ID: ${userId}\nAmount: ${amount} USDT`, {
         reply_markup: {
             inline_keyboard: [
                 [
@@ -145,17 +150,20 @@ bot.onText(/\/withdraw(?:\s+(.+))?/, (msg, match) => {
             ]
         }
     });
+
+    res.json({ success: true, message: "Withdrawal request submitted successfully" });
 });
 
+// Telegram Callback Query Handler (Approve / Reject buttons)
 bot.on('callback_query', async (query) => {
     const chatId = query.message.chat.id;
     const data = query.data;
 
     if (data === 'menu_deposit') {
-        return bot.sendMessage(chatId, "💡 To deposit, send: `/deposit <amount>` (e.g. `/deposit 10`)");
+        return bot.sendMessage(chatId, "💡 To deposit, please open the Mining Mini App.");
     }
     if (data === 'menu_withdraw') {
-        return bot.sendMessage(chatId, "💡 To withdraw, send: `/withdraw <amount>` (e.g. `/withdraw 10`)");
+        return bot.sendMessage(chatId, "💡 To withdraw, please open the Mining Mini App.");
     }
 
     if (data.startsWith('approve_') || data.startsWith('reject_')) {
