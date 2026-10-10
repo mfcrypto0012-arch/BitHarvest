@@ -1,40 +1,10 @@
 const express = require('express');
-const mongoose = require('mongoose');
+const fs = require('fs');
 const app = express();
 
 const BOT_TOKEN = '8655058369:AAGo-4rFve2eK21RbVk6CXc6e2_wwbrLCCQ';
 const ADMIN_ID = '7482625921';
-
-// MongoDB Atlas Connection URI
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://Bhi123:Bhi123456@cluster0.uowvpoy.mongodb.net/bitharvest?retryWrites=true&w=majority';
-
-mongoose.connect(MONGO_URI)
-    .then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
-    .catch(err => console.error('❌ MongoDB Connection Error:', err));
-
-// Mongoose User Schema
-const userSchema = new mongoose.Schema({
-    id: { type: String, required: true, unique: true },
-    username: { type: String, default: 'User' },
-    balance: { type: Number, default: 0 },
-    ghs: { type: Number, default: 0 },
-    lastClaimTime: { type: Number, default: Date.now },
-    deposits: { type: Array, default: [] },
-    withdrawals: { type: Array, default: [] },
-    referredBy: { type: String, default: null },
-    referrals: {
-        level1: { type: [String], default: [] },
-        level2: { type: [String], default: [] },
-        level3: { type: [String], default: [] }
-    },
-    refEarnings: {
-        level1: { type: Number, default: 0 },
-        level2: { type: Number, default: 0 },
-        level3: { type: Number, default: 0 }
-    }
-});
-
-const User = mongoose.model('User', userSchema);
+const DB_FILE = './users.json';
 
 app.use(express.json());
 
@@ -44,6 +14,26 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     next();
 });
+
+// Load users from file if exists
+let users = {};
+if (fs.existsSync(DB_FILE)) {
+    try {
+        users = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    } catch (e) {
+        console.log("Error reading DB file:", e);
+        users = {};
+    }
+}
+
+// Function to save users to file
+function saveDatabase() {
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(users, null, 2));
+    } catch (e) {
+        console.log("Error saving DB file:", e);
+    }
+}
 
 let pendingRequests = {};
 
@@ -103,49 +93,42 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                 const parts = text.split(' ');
                 const referrerId = parts[1] ? String(parts[1]) : null;
 
-                let user = await User.findOne({ id: chatId });
-                if (!user) {
-                    user = new User({
+                if (!users[chatId]) {
+                    users[chatId] = {
                         id: chatId,
                         username: msg.from.username || msg.from.first_name || 'User',
                         balance: 0,
                         ghs: 0,
                         lastClaimTime: Date.now(),
-                        referredBy: referrerId || null
-                    });
+                        deposits: [],
+                        withdrawals: [],
+                        referredBy: referrerId || null,
+                        referrals: { level1: [], level2: [], level3: [] },
+                        refEarnings: { level1: 0, level2: 0, level3: 0 }
+                    };
 
-                    if (referrerId && referrerId !== chatId) {
-                        const referrer = await User.findOne({ id: referrerId });
-                        if (referrer) {
-                            user.referredBy = referrerId;
-                            if (!referrer.referrals.level1.includes(chatId)) {
-                                referrer.referrals.level1.push(chatId);
-                                sendTelegramMessage(referrerId, `🎉 New Level 1 Referral Joined! ID: ${chatId}`);
+                    if (referrerId && users[referrerId] && referrerId !== chatId) {
+                        users[chatId].referredBy = referrerId;
+                        if (!users[referrerId].referrals.level1.includes(chatId)) {
+                            users[referrerId].referrals.level1.push(chatId);
+                            sendTelegramMessage(referrerId, `🎉 New Level 1 Referral Joined! ID: ${chatId}`);
+                        }
+
+                        const level2Ref = users[referrerId].referredBy;
+                        if (level2Ref && users[level2Ref]) {
+                            if (!users[level2Ref].referrals.level2.includes(chatId)) {
+                                users[level2Ref].referrals.level2.push(chatId);
                             }
 
-                            const level2RefId = referrer.referredBy;
-                            if (level2RefId) {
-                                const level2User = await User.findOne({ id: level2RefId });
-                                if (level2User) {
-                                    if (!level2User.referrals.level2.includes(chatId)) {
-                                        level2User.referrals.level2.push(chatId);
-                                    }
-
-                                    const level3RefId = level2User.referredBy;
-                                    if (level3RefId) {
-                                        const level3User = await User.findOne({ id: level3RefId });
-                                        if (level3User && !level3User.referrals.level3.includes(chatId)) {
-                                            level3User.referrals.level3.push(chatId);
-                                        }
-                                        await level3User?.save();
-                                    }
-                                    await level2User.save();
+                            const level3Ref = users[level2Ref].referredBy;
+                            if (level3Ref && users[level3Ref]) {
+                                if (!users[level3Ref].referrals.level3.includes(chatId)) {
+                                    users[level3Ref].referrals.level3.push(chatId);
                                 }
                             }
-                            await referrer.save();
                         }
                     }
-                    await user.save();
+                    saveDatabase();
                 }
 
                 await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the **Open BitHarvest** button below to launch the app.");
@@ -160,27 +143,29 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
             // --- Admin: Total Users Check (/stats) ---
             if (text === '/stats') {
                 if (chatId !== String(ADMIN_ID)) return;
-                const totalUsers = await User.countDocuments();
+                const totalUsers = Object.keys(users).length;
                 await sendTelegramMessage(chatId, `📊 **Bot Statistics:**\n\n👥 **Total Registered Users:** ${totalUsers}`);
             }
 
-            // --- Admin: Check User Details ---
+            // --- Admin: Check User Details (/user <id> or /users <id>) ---
             if (text.startsWith('/user') || text.startsWith('/users')) {
                 if (chatId !== String(ADMIN_ID)) return;
                 const targetId = text.split(' ')[1];
                 if (!targetId) return sendTelegramMessage(chatId, "⚠️ Usage: `/user <id>`");
-                
-                const u = await User.findOne({ id: targetId });
+                const u = users[targetId];
                 if (!u) return sendTelegramMessage(chatId, "User not found in database!");
 
+                // Calculate total approved deposits
                 const totalDeposit = (u.deposits || [])
                     .filter(d => d.status === 'PAID')
                     .reduce((sum, d) => sum + parseFloat(d.amount || 0), 0);
 
+                // Calculate total approved withdrawals
                 const totalWithdraw = (u.withdrawals || [])
                     .filter(w => w.status === 'PAID')
                     .reduce((sum, w) => sum + parseFloat(w.amount || 0), 0);
 
+                // Calculate total referrals count
                 const l1 = u.referrals?.level1?.length || 0;
                 const l2 = u.referrals?.level2?.length || 0;
                 const l3 = u.referrals?.level3?.length || 0;
@@ -206,11 +191,10 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                 const amount = parseFloat(parts[2]);
 
                 if (!targetId || isNaN(amount)) return sendTelegramMessage(chatId, "⚠️ Usage: `/addbal <id> <amount>`");
-                const u = await User.findOne({ id: targetId });
-                if (!u) return sendTelegramMessage(chatId, "User not found!");
+                if (!users[targetId]) return sendTelegramMessage(chatId, "User not found!");
 
-                u.balance += amount;
-                await u.save();
+                users[targetId].balance += amount;
+                saveDatabase();
                 sendTelegramMessage(chatId, `✅ Successfully added ${amount} USDT to User${targetId}`);
                 sendTelegramMessage(targetId, `💰 Admin added ${amount} USDT to your balance!`).catch(() => {});
             }
@@ -223,11 +207,10 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                 const amount = parseFloat(parts[2]);
 
                 if (!targetId || isNaN(amount)) return sendTelegramMessage(chatId, "⚠️ Usage: `/cutbal <id> <amount>`");
-                const u = await User.findOne({ id: targetId });
-                if (!u) return sendTelegramMessage(chatId, "User not found!");
+                if (!users[targetId]) return sendTelegramMessage(chatId, "User not found!");
 
-                u.balance -= amount;
-                await u.save();
+                users[targetId].balance -= amount;
+                saveDatabase();
                 sendTelegramMessage(chatId, `✅ Successfully deducted ${amount} USDT from User${targetId}`);
                 sendTelegramMessage(targetId, `⚠️ Admin deducted ${amount} USDT from your balance.`).catch(() => {});
             }
@@ -238,12 +221,11 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                 const messageText = text.replace('/broadcast', '').trim();
                 if (!messageText) return sendTelegramMessage(chatId, "⚠️ Usage: `/broadcast <message>`");
 
-                const allUsers = await User.find({});
                 let count = 0;
-                for (let usr of allUsers) {
-                    sendTelegramMessage(usr.id, `📢 **Announcement:**\n\n${messageText}`).catch(() => {});
+                Object.keys(users).forEach(id => {
+                    sendTelegramMessage(id, `📢 **Announcement:**\n\n${messageText}`).catch(() => {});
                     count++;
-                }
+                });
 
                 sendTelegramMessage(chatId, `✅ Broadcast sent to ${count} users!`);
             }
@@ -254,6 +236,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
             const data = query.data;
             const messageId = query.message.message_id;
 
+            // --- Deposit / Withdrawal Approvals ---
             if (data.startsWith('approve_') || data.startsWith('reject_')) {
                 if (chatId !== String(ADMIN_ID)) {
                     return answerCallbackQuery(query.id, "Unauthorized!");
@@ -267,7 +250,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     return answerCallbackQuery(query.id, "Request already handled or expired!");
                 }
 
-                const u = await User.findOne({ id: req.userId });
+                const u = users[req.userId];
 
                 if (isApprove) {
                     if (req.type === 'deposit') {
@@ -278,39 +261,30 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                             if (dep) dep.status = 'PAID';
 
                             // 3-Level Commission Distribution
-                            if (u.referredBy) {
-                                let l1User = await User.findOne({ id: u.referredBy });
-                                if (l1User) {
-                                    let comm1 = depAmount * 0.15;
-                                    l1User.balance += comm1;
-                                    l1User.refEarnings.level1 += comm1;
-                                    await l1User.save();
-                                    sendTelegramMessage(l1User.id, `🎁 Level 1 Commission Received: +${comm1.toFixed(4)} USDT!`);
+                            let currentU = u;
+                            if (currentU.referredBy && users[currentU.referredBy]) {
+                                let l1User = users[currentU.referredBy];
+                                let comm1 = depAmount * 0.15;
+                                l1User.balance += comm1;
+                                l1User.refEarnings.level1 += comm1;
+                                sendTelegramMessage(l1User.id, `🎁 Level 1 Commission Received: +${comm1.toFixed(4)} USDT!`);
 
-                                    if (l1User.referredBy) {
-                                        let l2User = await User.findOne({ id: l1User.referredBy });
-                                        if (l2User) {
-                                            let comm2 = depAmount * 0.02;
-                                            l2User.balance += comm2;
-                                            l2User.refEarnings.level2 += comm2;
-                                            await l2User.save();
-                                            sendTelegramMessage(l2User.id, `🎁 Level 2 Commission Received: +${comm2.toFixed(4)} USDT!`);
+                                if (l1User.referredBy && users[l1User.referredBy]) {
+                                    let l2User = users[l1User.referredBy];
+                                    let comm2 = depAmount * 0.02;
+                                    l2User.balance += comm2;
+                                    l2User.refEarnings.level2 += comm2;
+                                    sendTelegramMessage(l2User.id, `🎁 Level 2 Commission Received: +${comm2.toFixed(4)} USDT!`);
 
-                                            if (l2User.referredBy) {
-                                                let l3User = await User.findOne({ id: l3User.referredBy });
-                                                if (l3User) {
-                                                    let comm3 = depAmount * 0.01;
-                                                    l3User.balance += comm3;
-                                                    l3User.refEarnings.level3 += comm3;
-                                                    await l3User.save();
-                                                    sendTelegramMessage(l3User.id, `🎁 Level 3 Commission Received: +${comm3.toFixed(4)} USDT!`);
-                                                }
-                                            }
-                                        }
+                                    if (l2User.referredBy && users[l2User.referredBy]) {
+                                        let l3User = users[l2User.referredBy];
+                                        let comm3 = depAmount * 0.01;
+                                        l3User.balance += comm3;
+                                        l3User.refEarnings.level3 += comm3;
+                                        sendTelegramMessage(l3User.id, `🎁 Level 3 Commission Received: +${comm3.toFixed(4)} USDT!`);
                                     }
                                 }
                             }
-                            await u.save();
                         }
                         sendTelegramMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved!${req.amount} GHS Power added.`);
                     } else if (req.type === 'withdraw') {
@@ -318,7 +292,6 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                             u.balance -= parseFloat(req.amount);
                             const wd = u.withdrawals.find(w => w.id === req.reqId);
                             if (wd) wd.status = 'PAID';
-                            await u.save();
                         }
                         sendTelegramMessage(req.userId, `✅ Your withdrawal of ${req.amount} USDT has been approved!`);
                     }
@@ -328,20 +301,19 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         if (u) {
                             const dep = u.deposits.find(d => d.id === req.reqId);
                             if (dep) dep.status = 'DECLINED';
-                            await u.save();
                         }
                         sendTelegramMessage(req.userId, `❌ Your deposit request of ${req.amount} USDT was rejected.`);
                     } else if (req.type === 'withdraw') {
                         if (u) {
                             const wd = u.withdrawals.find(w => w.id === req.reqId);
                             if (wd) wd.status = 'DECLINED';
-                            await u.save();
                         }
                         sendTelegramMessage(req.userId, `❌ Your withdrawal request of ${req.amount} USDT was rejected.`);
                     }
                     editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${req.userId}\nAmount:${req.amount} USDT`);
                 }
 
+                saveDatabase();
                 delete pendingRequests[reqKey];
                 answerCallbackQuery(query.id, "Done!");
             }
@@ -352,26 +324,30 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
 });
 
 // User Data API for Mini App
-app.get('/api/user/:userId', async (req, res) => {
+app.get('/api/user/:userId', (req, res) => {
     const userId = req.params.userId;
-    let user = await User.findOne({ id: userId });
-    if (!user) {
-        user = new User({
+    if (!users[userId]) {
+        users[userId] = {
             id: userId,
             username: 'User',
             balance: 0,
             ghs: 0,
-            lastClaimTime: Date.now()
-        });
-        await user.save();
+            lastClaimTime: Date.now(),
+            deposits: [],
+            withdrawals: [],
+            referredBy: null,
+            referrals: { level1: [], level2: [], level3: [] },
+            refEarnings: { level1: 0, level2: 0, level3: 0 }
+        };
+        saveDatabase();
     }
-    res.json(user);
+    res.json(users[userId]);
 });
 
 // Claim Mining API
-app.post('/api/claim', async (req, res) => {
+app.post('/api/claim', (req, res) => {
     const { userId } = req.body;
-    const u = await User.findOne({ id: userId });
+    const u = users[userId];
     if (!u) return res.status(400).json({ success: false, message: "User not found" });
 
     let dailyProfit = u.ghs > 0 ? u.ghs * 0.3 : 0.01;
@@ -381,7 +357,7 @@ app.post('/api/claim', async (req, res) => {
 
     u.balance += MinedAmount;
     u.lastClaimTime = Date.now();
-    await u.save();
+    saveDatabase();
 
     res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
 });
@@ -391,18 +367,16 @@ app.post('/api/deposit', async (req, res) => {
     const { userId, username, amount, txHash } = req.body;
     if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
 
-    let u = await User.findOne({ id: userId });
-    if (!u) {
-        u = new User({ id: userId, username: username || 'User', balance: 0, ghs: 0, lastClaimTime: Date.now() });
+    if (!users[userId]) {
+        users[userId] = { id: userId, username: username || 'User', balance: 0, ghs: 0, lastClaimTime: Date.now(), deposits: [], withdrawals: [], referredBy: null, referrals: { level1: [], level2: [], level3: [] }, refEarnings: { level1: 0, level2: 0, level3: 0 } };
     }
 
     const reqId = 'dep_' + Date.now();
     const depositItem = { id: reqId, amount: amount, txHash: txHash, status: 'PENDING', date: new Date().toLocaleDateString() };
     
-    u.deposits.unshift(depositItem);
-    await u.save();
-
+    users[userId].deposits.unshift(depositItem);
     pendingRequests[reqId] = { type: 'deposit', userId: userId, amount: amount, txHash: txHash, reqId: reqId };
+    saveDatabase();
 
     const msgText = `📥 **New Deposit Request**\n\n` +
                     `👤 **User:** ${username || userId} (ID: \`${userId}\`)\n` +
@@ -424,18 +398,16 @@ app.post('/api/withdraw', async (req, res) => {
     const { userId, username, amount, address } = req.body;
     if (!userId || !amount || !address) return res.status(400).json({ success: false, message: "Missing data" });
 
-    let u = await User.findOne({ id: userId });
-    if (!u || u.balance < parseFloat(amount)) {
+    if (!users[userId] || users[userId].balance < parseFloat(amount)) {
         return res.status(400).json({ success: false, message: "Insufficient balance" });
     }
 
     const reqId = 'wd_' + Date.now();
     const withdrawItem = { id: reqId, amount: amount, address: address, status: 'PENDING', date: new Date().toLocaleDateString() };
 
-    u.withdrawals.unshift(withdrawItem);
-    await u.save();
-
+    users[userId].withdrawals.unshift(withdrawItem);
     pendingRequests[reqId] = { type: 'withdraw', userId: userId, amount: amount, address: address, reqId: reqId };
+    saveDatabase();
 
     const msgText = `📤 **New Withdrawal Request**\n\n` +
                     `👤 **User:** ${username || userId} (ID: \`${userId}\`)\n` +
