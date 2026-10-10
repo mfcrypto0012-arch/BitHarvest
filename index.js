@@ -1,11 +1,9 @@
-const TelegramBot = require('node-telegram-bot-api');
 const express = require('express');
 const app = express();
 
 const BOT_TOKEN = '8655058369:AAGo-4rFve2eK21RbVk6CXc6e2_wwbrLCCQ';
 const ADMIN_ID = '7482625921';
 
-const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 app.use(express.json());
 
 // Enable CORS manually
@@ -19,97 +17,21 @@ app.use((req, res, next) => {
 let users = {};
 let pendingRequests = {};
 
-// Telegram /start command
-bot.onText(/\/start (.+)?/, (msg, match) => {
-    const chatId = msg.chat.id;
-    const referrerId = match[1];
+// Function to send Telegram messages via Telegram HTTP API directly (No extra package needed)
+async function sendTelegramMessage(chatId, text, replyMarkup = null) {
+    try {
+        let body = { chat_id: chatId, text: text, parse_mode: 'Markdown' };
+        if (replyMarkup) body.reply_markup = replyMarkup;
 
-    if (!users[chatId]) {
-        users[chatId] = {
-            id: chatId,
-            username: msg.chat.username || msg.chat.first_name || 'User',
-            balance: 0,
-            ghs: 0,
-            deposits: [],
-            withdrawals: [],
-            referredBy: referrerId || null,
-            referrals: { level1: [], level2: [], level3: [] }
-        };
-
-        if (referrerId && users[referrerId]) {
-            users[referrerId].referrals.level1.push(chatId);
-            bot.sendMessage(referrerId, `🎉 New Referral Joined! User ID: ${chatId}`);
-        }
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+    } catch (e) {
+        console.log("Telegram API Error:", e);
     }
-
-    bot.sendMessage(chatId, "🚀 Welcome to BitHarvest USDT Mining Mini App!", {
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: "⛏️ Open Mining App", web_app: { url: "https://bitharvest.netlify.app" } }]
-            ]
-        }
-    });
-});
-
-// Admin Panel Command
-bot.onText(/\/admin/, (msg) => {
-    if (String(msg.chat.id) !== String(ADMIN_ID)) return;
-    bot.sendMessage(msg.chat.id, "👑 **Admin Panel**\n\nCommands:\n/user <id> - Check User Details\n/addbal <id> <amount> - Add Balance\n/cutbal <id> <amount> - Cut Balance\n/broadcast <message> - Send to All Users");
-});
-
-// Check User Details Command
-bot.onText(/\/user(?:\s+(.+))?/, (msg, match) => {
-    if (String(msg.chat.id) !== String(ADMIN_ID)) return;
-    const targetId = match[1];
-    if (!targetId) return bot.sendMessage(msg.chat.id, "⚠️ Usage: /user <id>");
-    const u = users[targetId];
-    if (!u) return bot.sendMessage(msg.chat.id, "User not found!");
-
-    bot.sendMessage(msg.chat.id, `👤 **User Info (${targetId})**\nUsername: @${u.username \vert{}\vert{} 'None'}\nBalance:${u.balance} USDT\nGHS Power: ${u.ghs}\nReferred By:${u.referredBy || 'None'}`);
-});
-
-// Add Balance Command
-bot.onText(/\/addbal(?:\s+(\d+)\s+(.+))?/, (msg, match) => {
-    if (String(msg.chat.id) !== String(ADMIN_ID)) return;
-    const targetId = match[1];
-    const amount = parseFloat(match[2]);
-
-    if (!targetId || isNaN(amount)) return bot.sendMessage(msg.chat.id, "⚠️ Usage: /addbal <id> <amount>");
-    if (!users[targetId]) return bot.sendMessage(msg.chat.id, "User not found in database!");
-    
-    users[targetId].balance += amount;
-    bot.sendMessage(msg.chat.id, `✅ Successfully added ${amount} USDT to User${targetId}`);
-    bot.sendMessage(targetId, `💰 Admin added ${amount} USDT to your balance!`).catch(() => {});
-});
-
-// Cut Balance Command
-bot.onText(/\/cutbal(?:\s+(\d+)\s+(.+))?/, (msg, match) => {
-    if (String(msg.chat.id) !== String(ADMIN_ID)) return;
-    const targetId = match[1];
-    const amount = parseFloat(match[2]);
-
-    if (!targetId || isNaN(amount)) return bot.sendMessage(msg.chat.id, "⚠️ Usage: /cutbal <id> <amount>");
-    if (!users[targetId]) return bot.sendMessage(msg.chat.id, "User not found in database!");
-    
-    users[targetId].balance -= amount;
-    bot.sendMessage(msg.chat.id, `✅ Successfully deducted ${amount} USDT from User${targetId}`);
-    bot.sendMessage(targetId, `⚠️ Admin deducted ${amount} USDT from your balance.`).catch(() => {});
-});
-
-// Broadcast Command
-bot.onText(/\/broadcast(?:\s+(.+))?/, (msg, match) => {
-    if (String(msg.chat.id) !== String(ADMIN_ID)) return;
-    const text = match[1];
-    if (!text) return bot.sendMessage(msg.chat.id, "⚠️ Usage: /broadcast <message>");
-    
-    let count = 0;
-    Object.keys(users).forEach(id => {
-        bot.sendMessage(id, `📢 **Announcement:**\n\n${text}`).catch(() => {});
-        count++;
-    });
-
-    bot.sendMessage(msg.chat.id, `✅ Broadcast sent to ${count} users!`);
-});
+}
 
 // API to get user data for Mini App
 app.get('/api/user/:userId', (req, res) => {
@@ -130,7 +52,7 @@ app.get('/api/user/:userId', (req, res) => {
 });
 
 // Deposit API from Mini App
-app.post('/api/deposit', (req, res) => {
+app.post('/api/deposit', async (req, res) => {
     const { userId, username, amount, txHash } = req.body;
     if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
 
@@ -149,23 +71,22 @@ app.post('/api/deposit', (req, res) => {
                     `💰 **Amount:** ${amount} USDT\n` +
                     `🔑 **TxHash:** \`${txHash}\``;
 
-    bot.sendMessage(ADMIN_ID, msgText, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: "✅ Approve", callback_data: `approve_${reqId}` },
-                    { text: "❌ Reject", callback_data: `reject_${reqId}` }
-                ]
+    const keyboard = {
+        inline_keyboard: [
+            [
+                { text: "✅ Approve", callback_data: `approve_${reqId}` },
+                { text: "❌ Reject", callback_data: `reject_${reqId}` }
             ]
-        }
-    });
+        ]
+    };
+
+    await sendTelegramMessage(ADMIN_ID, msgText, keyboard);
 
     res.json({ success: true, message: "Deposit request submitted successfully" });
 });
 
 // Withdraw API from Mini App
-app.post('/api/withdraw', (req, res) => {
+app.post('/api/withdraw', async (req, res) => {
     const { userId, username, amount, address } = req.body;
     if (!userId || !amount || !address) return res.status(400).json({ success: false, message: "Missing data" });
 
@@ -184,84 +105,18 @@ app.post('/api/withdraw', (req, res) => {
                     `💰 **Amount:** ${amount} USDT\n` +
                     `🏦 **Wallet Address:** \`${address}\``;
 
-    bot.sendMessage(ADMIN_ID, msgText, {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: "✅ Approve", callback_data: `approve_${reqId}` },
-                    { text: "❌ Reject", callback_data: `reject_${reqId}` }
-                ]
+    const keyboard = {
+        inline_keyboard: [
+            [
+                { text: "✅ Approve", callback_data: `approve_${reqId}` },
+                { text: "❌ Reject", callback_data: `reject_${reqId}` }
             ]
-        }
-    });
+        ]
+    };
+
+    await sendTelegramMessage(ADMIN_ID, msgText, keyboard);
 
     res.json({ success: true, message: "Withdrawal request submitted successfully" });
-});
-
-// Telegram Callback Query Handler (Approve / Reject buttons)
-bot.on('callback_query', async (query) => {
-    const chatId = query.message.chat.id;
-    const data = query.data;
-
-    if (data.startsWith('approve_') || data.startsWith('reject_')) {
-        if (String(chatId) !== String(ADMIN_ID)) {
-            return bot.answerCallbackQuery(query.id, { text: "Unauthorized!" });
-        }
-
-        const isApprove = data.startsWith('approve_');
-        const reqKey = data.replace(isApprove ? 'approve_' : 'reject_', '');
-        const req = pendingRequests[reqKey];
-
-        if (!req) {
-            return bot.answerCallbackQuery(query.id, { text: "Request already handled or expired!" });
-        }
-
-        const u = users[req.userId];
-
-        if (isApprove) {
-            if (req.type === 'deposit') {
-                if (u) {
-                    u.ghs += parseFloat(req.amount);
-                    const dep = u.deposits.find(d => d.id === req.reqId);
-                    if (dep) dep.status = 'PAID';
-                }
-                bot.sendMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved! ${req.amount} GHS Power added to your account.`);
-            } else if (req.type === 'withdraw') {
-                if (u) {
-                    u.balance -= parseFloat(req.amount);
-                    const wd = u.withdrawals.find(w => w.id === req.reqId);
-                    if (wd) wd.status = 'PAID';
-                }
-                bot.sendMessage(req.userId, `✅ Your withdrawal of ${req.amount} USDT has been approved and sent to your wallet!`);
-            }
-            bot.editMessageText(`✅ **Request Approved**\nUser ID: ${req.userId}\nAmount: ${req.amount} USDT`, {
-                chat_id: chatId,
-                message_id: query.message.message_id
-            });
-        } else {
-            if (req.type === 'deposit') {
-                if (u) {
-                    const dep = u.deposits.find(d => d.id === req.reqId);
-                    if (dep) dep.status = 'DECLINED';
-                }
-                bot.sendMessage(req.userId, `❌ Your deposit request of ${req.amount} USDT was rejected by admin.`);
-            } else if (req.type === 'withdraw') {
-                if (u) {
-                    const wd = u.withdrawals.find(w => w.id === req.reqId);
-                    if (wd) wd.status = 'DECLINED';
-                }
-                bot.sendMessage(req.userId, `❌ Your withdrawal request of ${req.amount} USDT was rejected by admin.`);
-            }
-            bot.editMessageText(`❌ **Request Rejected**\nUser ID: ${req.userId}\nAmount: ${req.amount} USDT`, {
-                chat_id: chatId,
-                message_id: query.message.message_id
-            });
-        }
-
-        delete pendingRequests[reqKey];
-        bot.answerCallbackQuery(query.id, { text: "Done!" });
-    }
 });
 
 const PORT = process.env.PORT || 3000;
