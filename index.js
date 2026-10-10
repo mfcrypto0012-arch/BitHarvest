@@ -8,7 +8,7 @@ const ADMIN_ID = '7482625921';
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 app.use(express.json());
 
-// Enable CORS manually without external package
+// Enable CORS manually
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
     res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
@@ -44,7 +44,7 @@ bot.onText(/\/start (.+)?/, (msg, match) => {
     bot.sendMessage(chatId, "🚀 Welcome to BitHarvest USDT Mining Mini App!", {
         reply_markup: {
             inline_keyboard: [
-                [{ text: "⛏️ Open Mining App", web_app: { url: "YOUR_NETLIFY_APP_URL" } }]
+                [{ text: "⛏️ Open Mining App", web_app: { url: "https://your-netlify-app-url.netlify.app" } }]
             ]
         }
     });
@@ -139,7 +139,7 @@ app.post('/api/deposit', (req, res) => {
     const reqId = 'dep_' + Date.now();
     const depositItem = { id: reqId, amount: amount, status: 'PENDING', date: new Date().toLocaleDateString() };
     
-    users[userId].deposits.push(depositItem);
+    users[userId].deposits.unshift(depositItem);
     pendingRequests[reqId] = { type: 'deposit', userId: userId, amount: amount, reqId: reqId };
 
     bot.sendMessage(ADMIN_ID, `📥 **New Deposit Request from Mini App**\n\nUser ID: ${userId}\nAmount: ${amount} USDT`, {
@@ -168,7 +168,7 @@ app.post('/api/withdraw', (req, res) => {
     const reqId = 'wd_' + Date.now();
     const withdrawItem = { id: reqId, amount: amount, status: 'PENDING', date: new Date().toLocaleDateString() };
 
-    users[userId].withdrawals.push(withdrawItem);
+    users[userId].withdrawals.unshift(withdrawItem);
     pendingRequests[reqId] = { type: 'withdraw', userId: userId, amount: amount, reqId: reqId };
 
     bot.sendMessage(ADMIN_ID, `📤 **New Withdrawal Request from Mini App**\n\nUser ID: ${userId}\nAmount: ${amount} USDT`, {
@@ -209,10 +209,11 @@ bot.on('callback_query', async (query) => {
             if (req.type === 'deposit') {
                 if (u) {
                     u.balance += parseFloat(req.amount);
+                    u.ghs += parseFloat(req.amount); // GHS Power increases on deposit
                     const dep = u.deposits.find(d => d.id === req.reqId);
                     if (dep) dep.status = 'PAID';
                 }
-                bot.sendMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved and added to your balance!`);
+                bot.sendMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved and added to your balance & mining power!`);
             } else if (req.type === 'withdraw') {
                 if (u) {
                     u.balance -= parseFloat(req.amount);
