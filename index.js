@@ -1,4 +1,4 @@
-const express = require('express');
+Const express = require('express');
 const app = express();
 
 const BOT_TOKEN = '8655058369:AAGo-4rFve2eK21RbVk6CXc6e2_wwbrLCCQ';
@@ -108,8 +108,23 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     }
                 }
 
-                // Sirf text message jayega, koi inline button nahi dikhega
-                await sendTelegramMessage(chatId, "🚀 Welcome to BitHarvest USDT Mining Mini App!\n\nNeeche **Open BitHarvest** button par click karke app kholein.");
+                // English Welcome Message with Inline Keyboard Button
+                const replyMarkup = {
+                    inline_keyboard: [
+                        [
+                            {
+                                text: "⛏️ Open Mining App",
+                                web_app: { url: "Aapke_Mini_App_Ka_URL_Yahan_Aayega" } // Yahan apna web app URL daal dein
+                            }
+                        ]
+                    ]
+                };
+
+                await sendTelegramMessage(
+                    chatId, 
+                    "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the **Open Mining App** button below to launch the app.", 
+                    replyMarkup
+                );
             }
         } else if (update.callback_query) {
             const query = update.callback_query;
@@ -166,147 +181,12 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                                 }
                             }
                         }
-                        sendTelegramMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved!${req.amount} GHS Power added.`);
-                    } else if (req.type === 'withdraw') {
-                        if (u) {
-                            u.balance -= parseFloat(req.amount);
-                            const wd = u.withdrawals.find(w => w.id === req.reqId);
-                            if (wd) wd.status = 'PAID';
-                        }
-                        sendTelegramMessage(req.userId, `✅ Your withdrawal of ${req.amount} USDT has been approved!`);
+                        sendTelegramMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved! ${req.amount} GHS Power added.`);
                     }
-                    editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${req.userId}\nAmount:${req.amount} USDT`);
-                } else {
-                    if (req.type === 'deposit') {
-                        if (u) {
-                            const dep = u.deposits.find(d => d.id === req.reqId);
-                            if (dep) dep.status = 'DECLINED';
-                        }
-                        sendTelegramMessage(req.userId, `❌ Your deposit request of ${req.amount} USDT was rejected.`);
-                    } else if (req.type === 'withdraw') {
-                        if (u) {
-                            const wd = u.withdrawals.find(w => w.id === req.reqId);
-                            if (wd) wd.status = 'DECLINED';
-                        }
-                        sendTelegramMessage(req.userId, `❌ Your withdrawal request of ${req.amount} USDT was rejected.`);
-                    }
-                    editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${req.userId}\nAmount:${req.amount} USDT`);
                 }
-
-                delete pendingRequests[reqKey];
-                answerCallbackQuery(query.id, "Done!");
             }
         }
     } catch (err) {
-        console.log("Webhook error:", err);
-    }
-});
-
-// User Data API for Mini App
-app.get('/api/user/:userId', (req, res) => {
-    const userId = req.params.userId;
-    if (!users[userId]) {
-        users[userId] = {
-            id: userId,
-            username: 'User',
-            balance: 0,
-            ghs: 0,
-            lastClaimTime: Date.now(),
-            deposits: [],
-            withdrawals: [],
-            referredBy: null,
-            referrals: { level1: [], level2: [], level3: [] },
-            refEarnings: { level1: 0, level2: 0, level3: 0 }
-        };
-    }
-    res.json(users[userId]);
-});
-
-// CLAIM MINING API
-app.post('/api/claim', (req, res) => {
-    const { userId } = req.body;
-    const u = users[userId];
-    if (!u) return res.status(400).json({ success: false, message: "User not found" });
-
-    let dailyProfit = u.ghs > 0 ? u.ghs * 0.3 : 0.01;
-    let perSecondRate = dailyProfit / 86400;
-    let elapsedSeconds = (Date.now() - u.lastClaimTime) / 1000;
-    let MinedAmount = Math.max(0, elapsedSeconds * perSecondRate);
-
-    u.balance += MinedAmount;
-    u.lastClaimTime = Date.now();
-
-    res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
-});
-
-// Deposit API
-app.post('/api/deposit', async (req, res) => {
-    const { userId, username, amount, txHash } = req.body;
-    if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
-
-    if (!users[userId]) {
-        users[userId] = { id: userId, username: username || 'User', balance: 0, ghs: 0, lastClaimTime: Date.now(), deposits: [], withdrawals: [], referredBy: null, referrals: { level1: [], level2: [], level3: [] }, refEarnings: { level1: 0, level2: 0, level3: 0 } };
-    }
-
-    const reqId = 'dep_' + Date.now();
-    const depositItem = { id: reqId, amount: amount, txHash: txHash, status: 'PENDING', date: new Date().toLocaleDateString() };
-    
-    users[userId].deposits.unshift(depositItem);
-    pendingRequests[reqId] = { type: 'deposit', userId: userId, amount: amount, txHash: txHash, reqId: reqId };
-
-    const msgText = `📥 **New Deposit Request**\n\n` +
-                    `👤 **User:** ${username || userId} (ID: \`${userId}\`)\n` +
-                    `💰 **Amount:** ${amount} USDT\n` +
-                    `🔑 **TxHash:** \`${txHash}\``;
-
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: "✅ Approve", callback_data: `approve_${reqId}` }, { text: "❌ Reject", callback_data: `reject_${reqId}` }]
-        ]
-    };
-
-    await sendTelegramMessage(ADMIN_ID, msgText, keyboard);
-    res.json({ success: true, message: "Deposit request submitted successfully" });
-});
-
-// Withdraw API
-app.post('/api/withdraw', async (req, res) => {
-    const { userId, username, amount, address } = req.body;
-    if (!userId || !amount || !address) return res.status(400).json({ success: false, message: "Missing data" });
-
-    if (!users[userId] || users[userId].balance < parseFloat(amount)) {
-        return res.status(400).json({ success: false, message: "Insufficient balance" });
-    }
-
-    const reqId = 'wd_' + Date.now();
-    const withdrawItem = { id: reqId, amount: amount, address: address, status: 'PENDING', date: new Date().toLocaleDateString() };
-
-    users[userId].withdrawals.unshift(withdrawItem);
-    pendingRequests[reqId] = { type: 'withdraw', userId: userId, amount: amount, address: address, reqId: reqId };
-
-    const msgText = `📤 **New Withdrawal Request**\n\n` +
-                    `👤 **User:** ${username || userId} (ID: \`${userId}\`)\n` +
-                    `💰 **Amount:** ${amount} USDT\n` +
-                    `🏦 **Wallet Address:** \`${address}\``;
-
-    const keyboard = {
-        inline_keyboard: [
-            [{ text: "✅ Approve", callback_data: `approve_${reqId}` }, { text: "❌ Reject", callback_data: `reject_${reqId}` }]
-        ]
-    };
-
-    await sendTelegramMessage(ADMIN_ID, msgText, keyboard);
-    res.json({ success: true, message: "Withdrawal request submitted successfully" });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
-    console.log(`Server running on port ${PORT}`);
-    const RENDER_URL = "https://bitharvest-qtyp.onrender.com";
-    try {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/api/webhook/${BOT_TOKEN}`);
-        console.log("Telegram Webhook Set Successfully!");
-    } catch (e) {
-        console.log("Failed to set webhook:", e);
+        console.log("Webhook Error:", err);
     }
 });
