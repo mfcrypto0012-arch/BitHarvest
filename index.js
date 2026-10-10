@@ -17,7 +17,7 @@ app.use((req, res, next) => {
 let users = {};
 let pendingRequests = {};
 
-// Function to send Telegram messages via Telegram HTTP API directly (No extra package needed)
+// Helper to send Telegram messages
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     try {
         let body = { chat_id: chatId, text: text, parse_mode: 'Markdown' };
@@ -32,6 +32,139 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
         console.log("Telegram API Error:", e);
     }
 }
+
+// Helper to edit Telegram messages
+async function editTelegramMessage(chatId, messageId, text, replyMarkup = null) {
+    try {
+        let body = { chat_id: chatId, message_id: messageId, text: text, parse_mode: 'Markdown' };
+        if (replyMarkup) body.reply_markup = replyMarkup;
+
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+    } catch (e) {
+        console.log("Telegram Edit Error:", e);
+    }
+}
+
+// Helper to answer callback queries
+async function answerCallbackQuery(callbackQueryId, text) {
+    try {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callback_query_id: callbackQueryId, text: text })
+        });
+    } catch (e) {
+        console.log("Callback Answer Error:", e);
+    }
+}
+
+// Telegram Webhook Endpoint to handle /start and Button Clicks
+app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
+    const update = req.body;
+    res.sendStatus(200);
+
+    try {
+        if (update.message) {
+            const msg = update.message;
+            const chatId = msg.chat.id;
+            const text = msg.text || '';
+
+            if (text.startsWith('/start')) {
+                const parts = text.split(' ');
+                const referrerId = parts[1];
+
+                if (!users[chatId]) {
+                    users[chatId] = {
+                        id: chatId,
+                        username: msg.from.username || msg.from.first_name || 'User',
+                        balance: 0,
+                        ghs: 0,
+                        deposits: [],
+                        withdrawals: [],
+                        referredBy: referrerId || null,
+                        referrals: { level1: [], level2: [], level3: [] }
+                    };
+
+                    if (referrerId && users[referrerId]) {
+                        users[referrerId].referrals.level1.push(chatId);
+                        sendTelegramMessage(referrerId, `🎉 New Referral Joined! User ID: ${chatId}`);
+                    }
+                }
+
+                const keyboard = {
+                    inline_keyboard: [
+                        [{ text: "⛏️ Open Mining App", web_app: { url: "https://bitharvest.netlify.app" } }]
+                    ]
+                };
+                await sendTelegramMessage(chatId, "🚀 Welcome to BitHarvest USDT Mining Mini App!", keyboard);
+            }
+        } else if (update.callback_query) {
+            const query = update.callback_query;
+            const chatId = query.message.chat.id;
+            const data = query.data;
+            const messageId = query.message.message_id;
+
+            if (data.startsWith('approve_') || data.startsWith('reject_')) {
+                if (String(chatId) !== String(ADMIN_ID)) {
+                    return answerCallbackQuery(query.id, "Unauthorized!");
+                }
+
+                const isApprove = data.startsWith('approve_');
+                const reqKey = data.replace(isApprove ? 'approve_' : 'reject_', '');
+                const req = pendingRequests[reqKey];
+
+                if (!req) {
+                    return answerCallbackQuery(query.id, "Request already handled or expired!");
+                }
+
+                const u = users[req.userId];
+
+                if (isApprove) {
+                    if (req.type === 'deposit') {
+                        if (u) {
+                            u.ghs += parseFloat(req.amount);
+                            const dep = u.deposits.find(d => d.id === req.reqId);
+                            if (dep) dep.status = 'PAID';
+                        }
+                        sendTelegramMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved!${req.amount} GHS Power added to your account.`);
+                    } else if (req.type === 'withdraw') {
+                        if (u) {
+                            u.balance -= parseFloat(req.amount);
+                            const wd = u.withdrawals.find(w => w.id === req.reqId);
+                            if (wd) wd.status = 'PAID';
+                        }
+                        sendTelegramMessage(req.userId, `✅ Your withdrawal of ${req.amount} USDT has been approved and sent to your wallet!`);
+                    }
+                    editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${req.userId}\nAmount:${req.amount} USDT`);
+                } else {
+                    if (req.type === 'deposit') {
+                        if (u) {
+                            const dep = u.deposits.find(d => d.id === req.reqId);
+                            if (dep) dep.status = 'DECLINED';
+                        }
+                        sendTelegramMessage(req.userId, `❌ Your deposit request of ${req.amount} USDT was rejected by admin.`);
+                    } else if (req.type === 'withdraw') {
+                        if (u) {
+                            const wd = u.withdrawals.find(w => w.id === req.reqId);
+                            if (wd) wd.status = 'DECLINED';
+                        }
+                        sendTelegramMessage(req.userId, `❌ Your withdrawal request of ${req.amount} USDT was rejected by admin.`);
+                    }
+                    editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${req.userId}\nAmount:${req.amount} USDT`);
+                }
+
+                delete pendingRequests[reqKey];
+                answerCallbackQuery(query.id, "Done!");
+            }
+        }
+    } catch (err) {
+        console.log("Webhook error:", err);
+    }
+});
 
 // API to get user data for Mini App
 app.get('/api/user/:userId', (req, res) => {
@@ -120,4 +253,14 @@ app.post('/api/withdraw', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, async () => {
+    console.log(`Server running on port ${PORT}`);
+    // Automatically set webhook on startup
+    const RENDER_URL = "https://bitharvest-qtyp.onrender.com";
+    try {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/api/webhook/${BOT_TOKEN}`);
+        console.log("Telegram Webhook Set Successfully!");
+    } catch (e) {
+        console.log("Failed to set webhook:", e);
+    }
+});
