@@ -1,8 +1,10 @@
 const express = require('express');
+const fs = require('fs');
 const app = express();
 
 const BOT_TOKEN = '8655058369:AAGo-4rFve2eK21RbVk6CXc6e2_wwbrLCCQ';
 const ADMIN_ID = '7482625921';
+const DB_FILE = './users.json';
 
 app.use(express.json());
 
@@ -13,7 +15,26 @@ app.use((req, res, next) => {
     next();
 });
 
+// Load users from file if exists
 let users = {};
+if (fs.existsSync(DB_FILE)) {
+    try {
+        users = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+    } catch (e) {
+        console.log("Error reading DB file:", e);
+        users = {};
+    }
+}
+
+// Function to save users to file
+function saveDatabase() {
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(users, null, 2));
+    } catch (e) {
+        console.log("Error saving DB file:", e);
+    }
+}
+
 let pendingRequests = {};
 
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
@@ -107,6 +128,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                             }
                         }
                     }
+                    saveDatabase();
                 }
 
                 await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the **Open BitHarvest** button below to launch the app.");
@@ -172,6 +194,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                 if (!users[targetId]) return sendTelegramMessage(chatId, "User not found!");
 
                 users[targetId].balance += amount;
+                saveDatabase();
                 sendTelegramMessage(chatId, `✅ Successfully added ${amount} USDT to User${targetId}`);
                 sendTelegramMessage(targetId, `💰 Admin added ${amount} USDT to your balance!`).catch(() => {});
             }
@@ -187,6 +210,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                 if (!users[targetId]) return sendTelegramMessage(chatId, "User not found!");
 
                 users[targetId].balance -= amount;
+                saveDatabase();
                 sendTelegramMessage(chatId, `✅ Successfully deducted ${amount} USDT from User${targetId}`);
                 sendTelegramMessage(targetId, `⚠️ Admin deducted ${amount} USDT from your balance.`).catch(() => {});
             }
@@ -289,6 +313,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${req.userId}\nAmount:${req.amount} USDT`);
                 }
 
+                saveDatabase();
                 delete pendingRequests[reqKey];
                 answerCallbackQuery(query.id, "Done!");
             }
@@ -314,6 +339,7 @@ app.get('/api/user/:userId', (req, res) => {
             referrals: { level1: [], level2: [], level3: [] },
             refEarnings: { level1: 0, level2: 0, level3: 0 }
         };
+        saveDatabase();
     }
     res.json(users[userId]);
 });
@@ -331,6 +357,7 @@ app.post('/api/claim', (req, res) => {
 
     u.balance += MinedAmount;
     u.lastClaimTime = Date.now();
+    saveDatabase();
 
     res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
 });
@@ -349,6 +376,7 @@ app.post('/api/deposit', async (req, res) => {
     
     users[userId].deposits.unshift(depositItem);
     pendingRequests[reqId] = { type: 'deposit', userId: userId, amount: amount, txHash: txHash, reqId: reqId };
+    saveDatabase();
 
     const msgText = `📥 **New Deposit Request**\n\n` +
                     `👤 **User:** ${username || userId} (ID: \`${userId}\`)\n` +
@@ -379,6 +407,7 @@ app.post('/api/withdraw', async (req, res) => {
 
     users[userId].withdrawals.unshift(withdrawItem);
     pendingRequests[reqId] = { type: 'withdraw', userId: userId, amount: amount, address: address, reqId: reqId };
+    saveDatabase();
 
     const msgText = `📤 **New Withdrawal Request**\n\n` +
                     `👤 **User:** ${username || userId} (ID: \`${userId}\`)\n` +
