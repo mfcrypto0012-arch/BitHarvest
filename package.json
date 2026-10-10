@@ -1,14 +1,13 @@
 {
-  "name": "bep20-miner-bot",
+  "name": "bitharvest-bot",
   "version": "1.0.0",
-  "description": "Telegram Mining Bot",
+  "description": "USDT Mining Bot",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.19.2",
-    "node-telegram-bot-api": "^0.65.1"
+    "express": "^4.18.2",
+    "node-telegram-bot-api": "^0.61.0"
   }
 }
-
