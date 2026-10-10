@@ -56,7 +56,7 @@ async function answerCallbackQuery(callbackQueryId, text) {
     }
 }
 
-// Telegram Webhook
+// Telegram Webhook Handler
 app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     const update = req.body;
     res.sendStatus(200);
@@ -67,6 +67,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
             const chatId = String(msg.chat.id);
             const text = msg.text || '';
 
+            // --- /start Command & Referral Link Logic ---
             if (text.startsWith('/start')) {
                 const parts = text.split(' ');
                 const referrerId = parts[1] ? String(parts[1]) : null;
@@ -108,15 +109,78 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     }
                 }
 
-                // Sirf text message jayega, koi inline button nahi dikhega
-                await sendTelegramMessage(chatId, "🚀 Welcome to BitHarvest USDT Mining Mini App!\n\nNeeche **Open BitHarvest** button par click karke app kholein.");
+                await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the **Open BitHarvest** button below to launch the app.");
             }
+
+            // --- Admin Panel Command ---
+            if (text === '/admin') {
+                if (chatId !== String(ADMIN_ID)) return;
+                await sendTelegramMessage(chatId, "👑 **Admin Panel Commands:**\n\n`/user <id>` - Check User Details\n`/addbal <id> <amount>` - Add Balance\n`/cutbal <id> <amount>` - Cut Balance\n`/broadcast <message>` - Send to All");
+            }
+
+            // --- Admin: Check User ---
+            if (text.startsWith('/user')) {
+                if (chatId !== String(ADMIN_ID)) return;
+                const targetId = text.split(' ')[1];
+                if (!targetId) return sendTelegramMessage(chatId, "⚠️ Usage: `/user <id>`");
+                const u = users[targetId];
+                if (!u) return sendTelegramMessage(chatId, "User not found in database!");
+
+                await sendTelegramMessage(chatId, `👤 **User Info (${targetId})**\nUsername: @${u.username}\nBalance:${u.balance.toFixed(4)} USDT\nGHS Power: ${u.ghs}\nReferred By:${u.referredBy || 'None'}`);
+            }
+
+            // --- Admin: Add Balance ---
+            if (text.startsWith('/addbal')) {
+                if (chatId !== String(ADMIN_ID)) return;
+                const parts = text.split(' ');
+                const targetId = parts[1];
+                const amount = parseFloat(parts[2]);
+
+                if (!targetId || isNaN(amount)) return sendTelegramMessage(chatId, "⚠️ Usage: `/addbal <id> <amount>`");
+                if (!users[targetId]) return sendTelegramMessage(chatId, "User not found!");
+
+                users[targetId].balance += amount;
+                sendTelegramMessage(chatId, `✅ Successfully added ${amount} USDT to User${targetId}`);
+                sendTelegramMessage(targetId, `💰 Admin added ${amount} USDT to your balance!`).catch(() => {});
+            }
+
+            // --- Admin: Cut Balance ---
+            if (text.startsWith('/cutbal')) {
+                if (chatId !== String(ADMIN_ID)) return;
+                const parts = text.split(' ');
+                const targetId = parts[1];
+                const amount = parseFloat(parts[2]);
+
+                if (!targetId || isNaN(amount)) return sendTelegramMessage(chatId, "⚠️ Usage: `/cutbal <id> <amount>`");
+                if (!users[targetId]) return sendTelegramMessage(chatId, "User not found!");
+
+                users[targetId].balance -= amount;
+                sendTelegramMessage(chatId, `✅ Successfully deducted ${amount} USDT from User${targetId}`);
+                sendTelegramMessage(targetId, `⚠️ Admin deducted ${amount} USDT from your balance.`).catch(() => {});
+            }
+
+            // --- Admin: Broadcast Message ---
+            if (text.startsWith('/broadcast')) {
+                if (chatId !== String(ADMIN_ID)) return;
+                const messageText = text.replace('/broadcast', '').trim();
+                if (!messageText) return sendTelegramMessage(chatId, "⚠️ Usage: `/broadcast <message>`");
+
+                let count = 0;
+                Object.keys(users).forEach(id => {
+                    sendTelegramMessage(id, `📢 **Announcement:**\n\n${messageText}`).catch(() => {});
+                    count++;
+                });
+
+                sendTelegramMessage(chatId, `✅ Broadcast sent to ${count} users!`);
+            }
+
         } else if (update.callback_query) {
             const query = update.callback_query;
             const chatId = String(query.message.chat.id);
             const data = query.data;
             const messageId = query.message.message_id;
 
+            // --- Deposit / Withdrawal Approvals ---
             if (data.startsWith('approve_') || data.startsWith('reject_')) {
                 if (chatId !== String(ADMIN_ID)) {
                     return answerCallbackQuery(query.id, "Unauthorized!");
@@ -140,7 +204,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                             const dep = u.deposits.find(d => d.id === req.reqId);
                             if (dep) dep.status = 'PAID';
 
-                            // Referral Commission
+                            // 3-Level Commission Distribution
                             let currentU = u;
                             if (currentU.referredBy && users[currentU.referredBy]) {
                                 let l1User = users[currentU.referredBy];
@@ -222,7 +286,7 @@ app.get('/api/user/:userId', (req, res) => {
     res.json(users[userId]);
 });
 
-// CLAIM MINING API
+// Claim Mining API
 app.post('/api/claim', (req, res) => {
     const { userId } = req.body;
     const u = users[userId];
