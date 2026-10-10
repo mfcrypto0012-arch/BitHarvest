@@ -77,6 +77,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         username: msg.from.username || msg.from.first_name || 'User',
                         balance: 0,
                         ghs: 0,
+                        lastClaimTime: Date.now(),
                         deposits: [],
                         withdrawals: [],
                         referredBy: referrerId || null,
@@ -84,24 +85,19 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         refEarnings: { level1: 0, level2: 0, level3: 0 }
                     };
 
-                    // Multi-level Referral Linking
                     if (referrerId && users[referrerId] && referrerId !== chatId) {
                         users[chatId].referredBy = referrerId;
-                        
-                        // Level 1
                         if (!users[referrerId].referrals.level1.includes(chatId)) {
                             users[referrerId].referrals.level1.push(chatId);
                             sendTelegramMessage(referrerId, `🎉 New Level 1 Referral Joined! ID: ${chatId}`);
                         }
 
-                        // Level 2
                         const level2Ref = users[referrerId].referredBy;
                         if (level2Ref && users[level2Ref]) {
                             if (!users[level2Ref].referrals.level2.includes(chatId)) {
                                 users[level2Ref].referrals.level2.push(chatId);
                             }
 
-                            // Level 3
                             const level3Ref = users[level2Ref].referredBy;
                             if (level3Ref && users[level3Ref]) {
                                 if (!users[level3Ref].referrals.level3.includes(chatId)) {
@@ -112,12 +108,8 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     }
                 }
 
-                const keyboard = {
-                    inline_keyboard: [
-                        [{ text: "⛏️ Open Mining App", web_app: { url: "https://bitharvest.netlify.app" } }]
-                    ]
-                };
-                await sendTelegramMessage(chatId, "🚀 Welcome to BitHarvest USDT Mining Mini App!", keyboard);
+                // Sirf text message jayega, koi inline button nahi dikhega
+                await sendTelegramMessage(chatId, "🚀 Welcome to BitHarvest USDT Mining Mini App!\n\nNeeche **Open BitHarvest** button par click karke app kholein.");
             }
         } else if (update.callback_query) {
             const query = update.callback_query;
@@ -148,9 +140,8 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                             const dep = u.deposits.find(d => d.id === req.reqId);
                             if (dep) dep.status = 'PAID';
 
-                            // --- Referral Commission Distribution ---
+                            // Referral Commission
                             let currentU = u;
-                            // Level 1 (15%)
                             if (currentU.referredBy && users[currentU.referredBy]) {
                                 let l1User = users[currentU.referredBy];
                                 let comm1 = depAmount * 0.15;
@@ -158,7 +149,6 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                                 l1User.refEarnings.level1 += comm1;
                                 sendTelegramMessage(l1User.id, `🎁 Level 1 Commission Received: +${comm1.toFixed(4)} USDT!`);
 
-                                // Level 2 (2%)
                                 if (l1User.referredBy && users[l1User.referredBy]) {
                                     let l2User = users[l1User.referredBy];
                                     let comm2 = depAmount * 0.02;
@@ -166,7 +156,6 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                                     l2User.refEarnings.level2 += comm2;
                                     sendTelegramMessage(l2User.id, `🎁 Level 2 Commission Received: +${comm2.toFixed(4)} USDT!`);
 
-                                    // Level 3 (1%)
                                     if (l2User.referredBy && users[l2User.referredBy]) {
                                         let l3User = users[l2User.referredBy];
                                         let comm3 = depAmount * 0.01;
@@ -222,6 +211,7 @@ app.get('/api/user/:userId', (req, res) => {
             username: 'User',
             balance: 0,
             ghs: 0,
+            lastClaimTime: Date.now(),
             deposits: [],
             withdrawals: [],
             referredBy: null,
@@ -232,13 +222,30 @@ app.get('/api/user/:userId', (req, res) => {
     res.json(users[userId]);
 });
 
+// CLAIM MINING API
+app.post('/api/claim', (req, res) => {
+    const { userId } = req.body;
+    const u = users[userId];
+    if (!u) return res.status(400).json({ success: false, message: "User not found" });
+
+    let dailyProfit = u.ghs > 0 ? u.ghs * 0.3 : 0.01;
+    let perSecondRate = dailyProfit / 86400;
+    let elapsedSeconds = (Date.now() - u.lastClaimTime) / 1000;
+    let MinedAmount = Math.max(0, elapsedSeconds * perSecondRate);
+
+    u.balance += MinedAmount;
+    u.lastClaimTime = Date.now();
+
+    res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
+});
+
 // Deposit API
 app.post('/api/deposit', async (req, res) => {
     const { userId, username, amount, txHash } = req.body;
     if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
 
     if (!users[userId]) {
-        users[userId] = { id: userId, username: username || 'User', balance: 0, ghs: 0, deposits: [], withdrawals: [], referredBy: null, referrals: { level1: [], level2: [], level3: [] }, refEarnings: { level1: 0, level2: 0, level3: 0 } };
+        users[userId] = { id: userId, username: username || 'User', balance: 0, ghs: 0, lastClaimTime: Date.now(), deposits: [], withdrawals: [], referredBy: null, referrals: { level1: [], level2: [], level3: [] }, refEarnings: { level1: 0, level2: 0, level3: 0 } };
     }
 
     const reqId = 'dep_' + Date.now();
