@@ -115,14 +115,14 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
             // --- Admin Panel Command ---
             if (text === '/admin') {
                 if (chatId !== String(ADMIN_ID)) return;
-                await sendTelegramMessage(chatId, "👑 **Admin Panel Commands:**\n\n`/stats` - Check Total Bot Users\n`/user <id>` - Check User Details\n`/addbal <id> <amount>` - Add Balance\n`/cutbal <id> <amount>` - Cut Balance\n`/broadcast <message>` - Send to All");
+                await sendTelegramMessage(chatId, "👑 **Admin Panel Commands:**\n\n`/users` - Check Total Users\n`/user <id>` - Check User Details\n`/addbal <id> <amount>` - Add Balance\n`/cutbal <id> <amount>` - Cut Balance\n`/broadcast <message>` - Send to All");
             }
 
-            // --- Admin: Total Bot Users Check ---
-            if (text === '/stats') {
+            // --- Admin: Check Total Users ---
+            if (text === '/users') {
                 if (chatId !== String(ADMIN_ID)) return;
-                const totalUsersCount = Object.keys(users).length;
-                await sendTelegramMessage(chatId, `📊 **Bot Statistics:**\n\n👥 **Total Registered Users:** ${totalUsersCount}`);
+                const totalUsers = Object.keys(users).length;
+                await sendTelegramMessage(chatId, `📊 **Total Bot Users:** ${totalUsers}`);
             }
 
             // --- Admin: Check User ---
@@ -336,10 +336,4 @@ app.post('/api/deposit', async (req, res) => {
         ]
     };
 
-    await sendTelegramMessage(ADMIN_ID, msgText, keyboard);
-    res.json({ success: true, message: "Deposit request submitted successfully" });
-});
-
-// Withdraw API
-app.post('/api/withdraw', async (req, res) => {
-    const { userId, username, amount, address } = req
+    await send
