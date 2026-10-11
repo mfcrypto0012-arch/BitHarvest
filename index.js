@@ -67,32 +67,6 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     }
 }
 
-async function editTelegramMessage(chatId, messageId, text, replyMarkup = null) {
-    try {
-        let body = { chat_id: chatId, message_id: messageId, text: text, parse_mode: 'Markdown' };
-        if (replyMarkup) body.reply_markup = replyMarkup;
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-    } catch (e) {
-        console.log("Telegram Edit Error:", e);
-    }
-}
-
-async function answerCallbackQuery(callbackQueryId, text) {
-    try {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ callback_query_id: callbackQueryId, text: text })
-        });
-    } catch (e) {
-        console.log("Callback Answer Error:", e);
-    }
-}
-
 app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     const update = req.body;
     res.sendStatus(200);
@@ -135,118 +109,6 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         { text: "🌐 Open Admin Dashboard", url: `https://bitharvest-qtyp.onrender.com/admin/dashboard?key=${ADMIN_ID}` }
                     ]]
                 });
-            }
-        } else if (update.callback_query) {
-            const query = update.callback_query;
-            const chatId = String(query.message.chat.id);
-            const data = query.data;
-            const messageId = query.message.message_id;
-
-            if (data.startsWith('approve_') || data.startsWith('reject_')) {
-                if (chatId !== String(ADMIN_ID)) return answerCallbackQuery(query.id, "Unauthorized!");
-
-                const isApprove = data.startsWith('approve_');
-                const reqId = data.replace(isApprove ? 'approve_' : 'reject_', '');
-                const reqDoc = await PendingRequest.findOne({ reqId });
-
-                if (!reqDoc) return answerCallbackQuery(query.id, "Request already handled!");
-
-                const u = await User.findOne({ id: reqDoc.userId });
-
-                if (isApprove) {
-                    if (reqDoc.type === 'deposit' && u) {
-                        const depAmount = parseFloat(reqDoc.amount);
-                        u.ghs += depAmount; // 1 USDT = 1 GHS
-                        
-                        let idx = u.deposits.findIndex(d => d.id === reqId || d.id === reqDoc.reqId);
-                        if (idx !== -1) {
-                            u.deposits[idx].status = 'PAID';
-                        } else {
-                            let p = u.deposits.find(d => d.status === 'PENDING');
-                            if (p) p.status = 'PAID';
-                        }
-                        u.markModified('deposits');
-                        await u.save();
-
-                        // Multi-level referral commission distribution
-                        if (u.referredBy) {
-                            let refL1 = await User.findOne({ id: u.referredBy });
-                            if (refL1) {
-                                let commL1 = depAmount * 0.15; // 15%
-                                refL1.balance += commL1;
-                                refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
-                                await refL1.save();
-                                sendTelegramMessage(refL1.id, `🎁 Received +${commL1.toFixed(4)} USDT (15% Level 1 Referral Commission)!`);
-
-                                if (refL1.referredBy) {
-                                    let refL2 = await User.findOne({ id: refL1.referredBy });
-                                    if (refL2) {
-                                        let commL2 = depAmount * 0.02; // 2%
-                                        refL2.balance += commL2;
-                                        refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
-                                        await refL2.save();
-                                        sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
-
-                                        if (refL2.referredBy) {
-                                            let refL3 = await User.findOne({ id: refL2.referredBy });
-                                            if (refL3) {
-                                                let commL3 = depAmount * 0.01; // 1%
-                                                refL3.balance += commL3;
-                                                refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
-                                                await refL3.save();
-                                                sendTelegramMessage(refL3.id, `🎁 Received +${commL3.toFixed(4)} USDT (1% Level 3 Referral Commission)!`);
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
-                    } else if (reqDoc.type === 'withdraw' && u) {
-                        u.balance -= parseFloat(reqDoc.amount);
-                        
-                        let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
-                        if (idx !== -1) {
-                            u.withdrawals[idx].status = 'PAID';
-                        } else {
-                            let p = u.withdrawals.find(w => w.status === 'PENDING' || w.status === 'PEND1NG');
-                            if (p) p.status = 'PAID';
-                        }
-                        u.markModified('withdrawals');
-                        await u.save();
-                        sendTelegramMessage(reqDoc.userId, `✅ Your withdrawal of ${reqDoc.amount} USDT has been approved!`);
-                    }
-                    editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${reqDoc.userId}\nAmount:${reqDoc.amount} USDT`);
-                } else {
-                    if (reqDoc.type === 'deposit' && u) {
-                        let idx = u.deposits.findIndex(d => d.id === reqId || d.id === reqDoc.reqId);
-                        if (idx !== -1) {
-                            u.deposits[idx].status = 'DECLINED';
-                        } else {
-                            let p = u.deposits.find(d => d.status === 'PENDING');
-                            if (p) p.status = 'DECLINED';
-                        }
-                        u.markModified('deposits');
-                        await u.save();
-                        sendTelegramMessage(reqDoc.userId, `❌ Your deposit was rejected.`);
-                    } else if (reqDoc.type === 'withdraw' && u) {
-                        let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
-                        if (idx !== -1) {
-                            u.withdrawals[idx].status = 'DECLINED';
-                        } else {
-                            let p = u.withdrawals.find(w => w.status === 'PENDING' || w.status === 'PEND1NG');
-                            if (p) p.status = 'DECLINED';
-                        }
-                        u.markModified('withdrawals');
-                        await u.save();
-                        sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal was rejected.`);
-                    }
-                    editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${reqDoc.userId}\nAmount:${reqDoc.amount} USDT`);
-                }
-
-                await PendingRequest.deleteOne({ reqId });
-                answerCallbackQuery(query.id, "Done!");
             }
         }
     } catch (err) {
@@ -370,12 +232,12 @@ app.get('/admin/dashboard', async (req, res) => {
 
                 ${searchedUser ? `
                     <div class="user-details-box">
-                        <p>👤 <b>User Name:</b> @${searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
-                        <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
+                        <p>👤 <b>User Name:</b> @${searchedUser.username} \vert{} <b>ID:</b> <code>${searchedUser.id}</code></p>
+                        <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> \vert{} ⚡ <b>GHS Power:</b>${searchedUser.ghs} GHS</p>
                         <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
                         <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span></p>
-                        <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
-                        <p>🎁 <b>Total Referral Commission Earned:</b> <span style="color:#fbbf24; font-weight:bold;">${totalRefEarn.toFixed(4)} USDT</span> (L1: ${(searchedUser.refEarnings?.level1 || 0).toFixed(2)} | L2: ${(searchedUser.refEarnings?.level2 || 0).toFixed(2)} | L3: ${(searchedUser.refEarnings?.level3 || 0).toFixed(2)})</p>
+                        <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length \vert{}\vert{} 0} \vert{} L3: ${searchedUser.referrals?.level3?.length || 0}</p>
+                        <p>🎁 <b>Total Referral Commission Earned:</b> <span style="color:#fbbf24; font-weight:bold;">${totalRefEarn.toFixed(4)} USDT</span> (L1:${(searchedUser.refEarnings?.level1 || 0).toFixed(2)} | L2: ${(searchedUser.refEarnings?.level2 \vert{}\vert{} 0).toFixed(2)} \vert{} L3: ${(searchedUser.refEarnings?.level3 || 0).toFixed(2)})</p>
                         <p>🔗 <b>Referred By ID:</b> ${searchedUser.referredBy || 'Direct Join'}</p>
                         
                         <hr style="border-color:#292524; margin:12px 0;">
@@ -577,7 +439,7 @@ app.post('/admin/manage-balance', async (req, res) => {
         sendTelegramMessage(userId, `⚠️ Admin deducted -${amt} USDT from your balance.`);
     }
     await u.save();
-    res.json({ success: true, message: `Successfully ${action}ed ${amt} USDT for user${userId}!` });
+    res.json({ success: true, message: `Successfully ${action}ed ${amt} USDT for user ${userId}!` });
 });
 
 app.post('/admin/broadcast', async (req, res) => {
@@ -636,17 +498,6 @@ app.post('/api/deposit', async (req, res) => {
 
     await PendingRequest.create({ reqId, type: 'deposit', userId, amount: amt, txHash });
 
-    if (ADMIN_ID) {
-        const msgText = `📥 **New Deposit Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amt} USDT**\n🔑 TxHash: \`${txHash}\``;
-        const inlineKeyboard = {
-            inline_keyboard: [[
-                { text: "✅ Approve", callback_data: `approve_${reqId}` },
-                { text: "❌ Reject", callback_data: `reject_${reqId}` }
-            ]]
-        };
-        await sendTelegramMessage(ADMIN_ID, msgText, inlineKeyboard);
-    }
-
     res.json({ success: true, message: "Deposit request submitted successfully" });
 });
 
@@ -664,17 +515,6 @@ app.post('/api/withdraw', async (req, res) => {
     await u.save();
 
     await PendingRequest.create({ reqId, type: 'withdraw', userId, amount, address });
-
-    if (ADMIN_ID) {
-        const msgText = `📤 **New Withdraw Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amount} USDT**\n🏦 Address: \`${address}\``;
-        const inlineKeyboard = {
-            inline_keyboard: [[
-                { text: "✅ Approve", callback_data: `approve_${reqId}` },
-                { text: "❌ Reject", callback_data: `reject_${reqId}` }
-            ]]
-        };
-        await sendTelegramMessage(ADMIN_ID, msgText, inlineKeyboard);
-    }
 
     res.json({ success: true, message: "Withdrawal request submitted successfully" });
 });
