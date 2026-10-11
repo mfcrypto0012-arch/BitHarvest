@@ -192,42 +192,6 @@ app.get('/admin/dashboard', async (req, res) => {
             }
         }
 
-        let userDetailsHtml = '';
-        if (searchedUser) {
-            userDetailsHtml = `
-            <div class="user-box">
-                <p><b>User:</b> @${searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
-                <p><b>Balance:</b> ${searchedUser.balance.toFixed(4)} USDT | <b>GHS:</b> ${searchedUser.ghs}</p>
-                <p><b>Total Deposit:</b> ${userTotalDeposit.toFixed(2)} USDT</p>
-                <p><b>Total Withdraw:</b> ${userTotalWithdraw.toFixed(2)} USDT</p>
-                <p><b>Referrals:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
-                <p><b>Ref Commission:</b> ${totalRefEarn.toFixed(4)} USDT</p>
-                <p><b>Referred By:</b> ${searchedUser.referredBy || 'Direct'}</p>
-                <hr style="border-color:#292524; margin:8px 0;">
-                <b>Manage Balance:</b>
-                <div style="display:flex; gap:8px; margin-top:6px;">
-                    <input type="number" id="mod-amt" placeholder="Amount">
-                    <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">Add</button>
-                    <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">Cut</button>
-                </div>
-            </div>`;
-        } else if (searchId) {
-            userDetailsHtml = `<p style="color:#ef4444; font-size:12px;">User not found!</p>`;
-        }
-
-        let pendingRows = requests.map(r => `
-            <tr>
-                <td><b style="color:${r.type==='deposit'?'#22c55e':'#ef4444'}">${r.type.toUpperCase()}</b></td>
-                <td>${r.userId}</td>
-                <td><b>${r.amount}</b></td>
-                <td>${r.txHash ? 'Tx: ' + r.txHash.substring(0,6) : 'Addr: ' + (r.address ? r.address.substring(0,6) : 'N/A')}</td>
-                <td>
-                    <button class="btn btn-green" style="padding:3px 6px; font-size:10px;" onclick="handleReq('${r.reqId}', 'approve')">Approve</button>
-                    <button class="btn btn-red" style="padding:3px 6px; font-size:10px;" onclick="handleReq('${r.reqId}', 'reject')">Reject</button>
-                </td>
-            </tr>
-        `).join('');
-
         let html = `<!DOCTYPE html>
 <html>
 <head>
@@ -275,7 +239,24 @@ app.get('/admin/dashboard', async (req, res) => {
             <input type="text" name="search" placeholder="Enter Telegram ID or Username" value="${searchId}">
             <button type="submit" class="btn">Search</button>
         </form>
-        ${userDetailsHtml}
+        ${searchedUser ? `
+            <div class="user-box">
+                <p><b>User:</b> @${searchedUser.username} \vert{} <b>ID:</b> <code>${searchedUser.id}</code></p>
+                <p><b>Balance:</b> ${searchedUser.balance.toFixed(4)} USDT \vert{} <b>GHS:</b>${searchedUser.ghs}</p>
+                <p><b>Total Deposit:</b> ${userTotalDeposit.toFixed(2)} USDT</p>
+                <p><b>Total Withdraw:</b> ${userTotalWithdraw.toFixed(2)} USDT</p>
+                <p><b>Referrals:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length \vert{}\vert{} 0} \vert{} L3: ${searchedUser.referrals?.level3?.length || 0}</p>
+                <p><b>Ref Commission:</b> ${totalRefEarn.toFixed(4)} USDT</p>
+                <p><b>Referred By:</b> ${searchedUser.referredBy || 'Direct'}</p>
+                <hr style="border-color:#292524; margin:8px 0;">
+                <b>Manage Balance:</b>
+                <div style="display:flex; gap:8px; margin-top:6px;">
+                    <input type="number" id="mod-amt" placeholder="Amount">
+                    <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">Add</button>
+                    <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">Cut</button>
+                </div>
+            </div>
+        ` : searchId ? `<p style="color:#ef4444; font-size:12px;">User not found!</p>` : ''}
     </div>
 
     <div class="card">
@@ -283,7 +264,18 @@ app.get('/admin/dashboard', async (req, res) => {
         ${requests.length === 0 ? `<p style="font-size:11px; color:#a8a29e;">No pending requests.</p>` : `
             <table>
                 <tr><th>Type</th><th>ID</th><th>Amount</th><th>Details</th><th>Action</th></tr>
-                ${pendingRows}
+                ${requests.map(r => `
+                    <tr>
+                        <td><b style="color:${r.type==='deposit'?'#22c55e':'#ef4444'}">${r.type.toUpperCase()}</b></td>
+                        <td>${r.userId}</td>
+                        <td><b>${r.amount}</b></td>
+                        <td>${r.txHash ? 'Tx: ' + r.txHash.substring(0,6) : 'Addr: ' + (r.address ? r.address.substring(0,6) : 'N/A')}</td>
+                        <td>
+                            <button class="btn btn-green" style="padding:3px 6px; font-size:10px;" onclick="handleReq('${r.reqId}', 'approve')">Approve</button>
+                            <button class="btn btn-red" style="padding:3px 6px; font-size:10px;" onclick="handleReq('${r.reqId}', 'reject')">Reject</button>
+                        </td>
+                    </tr>
+                `).join('')}
             </table>
         `}
     </div>
@@ -521,8 +513,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
 });
-```eof
-
-Aap right side waale editor pane se poora code asani se select karke copy kar sakte hain. 
-
-Render Dashboard ki **Settings** par jaakar **Start Command** ko zaroor **`node server.js`** kar dein.
