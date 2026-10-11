@@ -1,5 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+
 const app = express();
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -10,7 +12,6 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
-// Mongoose User Schema
 const userSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
     username: { type: String, default: 'User' },
@@ -69,7 +70,7 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     }
 }
 
-// Telegram Webhook Handler (No deposit/withdraw alerts sent here)
+// Telegram Webhook Handler (No alerts for deposits/withdrawals sent to bot)
 app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     const update = req.body;
     res.sendStatus(200);
@@ -412,8 +413,7 @@ app.post('/admin/action', async (req, res) => {
 
             sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
         } else if (reqDoc.type === 'withdraw' && u) {
-            // Balance Return on Rejection
-            u.balance += parseFloat(reqDoc.amount);
+            u.balance += parseFloat(reqDoc.amount); // Return balance on rejection
             let updatedWithdrawals = u.withdrawals.map(w => {
                 if (w.id === reqDoc.reqId) {
                     return { ...w, status: 'DECLINED' };
@@ -492,7 +492,6 @@ app.post('/api/claim', async (req, res) => {
     res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
 });
 
-// Deposit Submission (Only saves to MongoDB & Panel, NO Telegram message sent)
 app.post('/api/deposit', async (req, res) => {
     const { userId, username, amount, txHash } = req.body;
     let amt = parseFloat(amount);
@@ -513,7 +512,6 @@ app.post('/api/deposit', async (req, res) => {
     res.json({ success: true, message: "Deposit request submitted successfully" });
 });
 
-// Withdraw Submission (Deducts balance immediately & sets PENDING. NO Telegram message sent)
 app.post('/api/withdraw', async (req, res) => {
     const { userId, username, amount, address } = req.body;
     let amt = parseFloat(amount);
@@ -524,7 +522,7 @@ app.post('/api/withdraw', async (req, res) => {
         return res.status(400).json({ success: false, message: "Insufficient balance" });
     }
 
-    u.balance -= amt; // Deduct balance when user submits withdrawal
+    u.balance -= amt;
     const reqId = 'wd_' + Date.now();
     u.withdrawals.unshift({ id: reqId, amount: amt, address, status: 'PENDING', date: new Date().toLocaleDateString() });
     u.markModified('withdrawals');
