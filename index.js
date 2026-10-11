@@ -1,6 +1,5 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const fetch = require('node-fetch');
 
 const app = express();
 
@@ -8,7 +7,6 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_ID;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 
-// MongoDB Connection
 mongoose.connect(MONGO_URI)
     .then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
@@ -58,12 +56,12 @@ app.use((req, res, next) => {
     next();
 });
 
-// Helper Function: Safe Telegram Message Sender
+// Native Telegram Message Sender (No external fetch or axios library needed)
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     try {
         let body = { chat_id: chatId, text: text, parse_mode: 'Markdown' };
         if (replyMarkup) body.reply_markup = replyMarkup;
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+        await globalThis.fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body)
@@ -73,7 +71,7 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     }
 }
 
-// Telegram Webhook Handler (Only Commands, NO Deposit/Withdraw notifications to Bot)
+// Telegram Webhook Handler (Commands only - NO deposit/withdraw notifications sent to Telegram)
 app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     const update = req.body;
     res.sendStatus(200);
@@ -329,7 +327,7 @@ app.get('/admin/dashboard', async (req, res) => {
     res.send(html);
 });
 
-// Admin Approve/Reject Handler - Guaranteed Array Status Update to PAID or DECLINED
+// Admin Approve/Reject Action - Updates User Array Status to PAID or DECLINED
 app.post('/admin/action', async (req, res) => {
     const { reqId, action, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -545,7 +543,7 @@ app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
     const RENDER_URL = process.env.RENDER_EXTERNAL_URL || "https://bitharvest-qtyp.onrender.com";
     try {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/api/webhook/${BOT_TOKEN}`);
+        await globalThis.fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/api/webhook/${BOT_TOKEN}`);
         console.log("Telegram Webhook Set Successfully!");
     } catch (e) {
         console.log("Failed to set webhook:", e);
