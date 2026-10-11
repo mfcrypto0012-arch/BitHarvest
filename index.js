@@ -10,6 +10,7 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
+// Mongoose User Schema
 const userSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
     username: { type: String, default: 'User' },
@@ -29,7 +30,8 @@ const userSchema = new mongoose.Schema({
         level2: { type: Number, default: 0 },
         level3: { type: Number, default: 0 }
     }
-});
+}, { minimize: false });
+
 const User = mongoose.model('User', userSchema);
 
 const pendingRequestSchema = new mongoose.Schema({
@@ -67,7 +69,7 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     }
 }
 
-// Webhook Handler
+// Telegram Webhook Handler (No deposit/withdraw alerts sent here)
 app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     const update = req.body;
     res.sendStatus(200);
@@ -105,7 +107,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                 }
                 await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
             } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
-                await sendTelegramMessage(chatId, `👑 **BitHarvest Admin Panel Access**\n\nClick below to open Admin Dashboard:`, {
+                await sendTelegramMessage(chatId, `👑 **BitHarvest Admin Access**\n\nClick below to open Admin Dashboard:`, {
                     inline_keyboard: [[
                         { text: "🌐 Open Admin Dashboard", url: `https://bitharvest-qtyp.onrender.com/admin/dashboard?key=${ADMIN_ID}` }
                     ]]
@@ -117,7 +119,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     }
 });
 
-// --- Master Admin Dashboard Route ---
+// Admin Panel Web View
 app.get('/admin/dashboard', async (req, res) => {
     const adminKey = req.query.key;
     if (adminKey !== ADMIN_ID) {
@@ -323,7 +325,7 @@ app.get('/admin/dashboard', async (req, res) => {
     res.send(html);
 });
 
-// --- Admin Action Route with Dynamic Status Update (PAID / DECLINED) ---
+// Admin Approve / Reject Endpoint with Guaranteed Status Updates (PAID / DECLINED)
 app.post('/admin/action', async (req, res) => {
     const { reqId, action, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -337,16 +339,18 @@ app.post('/admin/action', async (req, res) => {
         if (reqDoc.type === 'deposit' && u) {
             const depAmount = parseFloat(reqDoc.amount);
             u.ghs += depAmount;
-            
-            // Update Deposit Status to PAID in User Array
-            u.deposits = u.deposits.map(d => {
-                if (d.id === reqDoc.reqId) { d.status = 'PAID'; }
+
+            let updatedDeposits = u.deposits.map(d => {
+                if (d.id === reqDoc.reqId) {
+                    return { ...d, status: 'PAID' };
+                }
                 return d;
             });
+            u.deposits = updatedDeposits;
             u.markModified('deposits');
             await u.save();
 
-            // Multi-level referral commission distribution
+            // Multi-level Referral Commission
             if (u.referredBy) {
                 let refL1 = await User.findOne({ id: u.referredBy });
                 if (refL1) {
@@ -382,13 +386,13 @@ app.post('/admin/action', async (req, res) => {
 
             sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
         } else if (reqDoc.type === 'withdraw' && u) {
-            u.balance -= parseFloat(reqDoc.amount);
-            
-            // Update Withdrawal Status to PAID in User Array
-            u.withdrawals = u.withdrawals.map(w => {
-                if (w.id === reqDoc.reqId) { w.status = 'PAID'; }
+            let updatedWithdrawals = u.withdrawals.map(w => {
+                if (w.id === reqDoc.reqId) {
+                    return { ...w, status: 'PAID' };
+                }
                 return w;
             });
+            u.withdrawals = updatedWithdrawals;
             u.markModified('withdrawals');
             await u.save();
 
@@ -396,23 +400,31 @@ app.post('/admin/action', async (req, res) => {
         }
     } else {
         if (reqDoc.type === 'deposit' && u) {
-            u.deposits = u.deposits.map(d => {
-                if (d.id === reqDoc.reqId) { d.status = 'DECLINED'; }
+            let updatedDeposits = u.deposits.map(d => {
+                if (d.id === reqDoc.reqId) {
+                    return { ...d, status: 'DECLINED' };
+                }
                 return d;
             });
+            u.deposits = updatedDeposits;
             u.markModified('deposits');
             await u.save();
 
             sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
         } else if (reqDoc.type === 'withdraw' && u) {
-            u.withdrawals = u.withdrawals.map(w => {
-                if (w.id === reqDoc.reqId) { w.status = 'DECLINED'; }
+            // Balance Return on Rejection
+            u.balance += parseFloat(reqDoc.amount);
+            let updatedWithdrawals = u.withdrawals.map(w => {
+                if (w.id === reqDoc.reqId) {
+                    return { ...w, status: 'DECLINED' };
+                }
                 return w;
             });
+            u.withdrawals = updatedWithdrawals;
             u.markModified('withdrawals');
             await u.save();
 
-            sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined.`);
+            sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined and amount refunded to balance.`);
         }
     }
 
@@ -452,7 +464,7 @@ app.post('/admin/broadcast', async (req, res) => {
     res.json({ success: true, message: `Broadcast sent to ${count} users successfully!` });
 });
 
-// --- App APIs ---
+// App APIs
 app.get('/api/user/:userId', async (req, res) => {
     const userId = req.params.userId;
     let user = await User.findOne({ id: userId });
@@ -480,6 +492,7 @@ app.post('/api/claim', async (req, res) => {
     res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
 });
 
+// Deposit Submission (Only saves to MongoDB & Panel, NO Telegram message sent)
 app.post('/api/deposit', async (req, res) => {
     const { userId, username, amount, txHash } = req.body;
     let amt = parseFloat(amount);
@@ -500,21 +513,24 @@ app.post('/api/deposit', async (req, res) => {
     res.json({ success: true, message: "Deposit request submitted successfully" });
 });
 
+// Withdraw Submission (Deducts balance immediately & sets PENDING. NO Telegram message sent)
 app.post('/api/withdraw', async (req, res) => {
     const { userId, username, amount, address } = req.body;
-    if (!userId || !amount || !address) return res.status(400).json({ success: false, message: "Missing data" });
+    let amt = parseFloat(amount);
+    if (!userId || !amt || !address) return res.status(400).json({ success: false, message: "Missing data" });
 
     let u = await User.findOne({ id: userId });
-    if (!u || u.balance < parseFloat(amount)) {
+    if (!u || u.balance < amt) {
         return res.status(400).json({ success: false, message: "Insufficient balance" });
     }
 
+    u.balance -= amt; // Deduct balance when user submits withdrawal
     const reqId = 'wd_' + Date.now();
-    u.withdrawals.unshift({ id: reqId, amount, address, status: 'PENDING', date: new Date().toLocaleDateString() });
+    u.withdrawals.unshift({ id: reqId, amount: amt, address, status: 'PENDING', date: new Date().toLocaleDateString() });
     u.markModified('withdrawals');
     await u.save();
 
-    await PendingRequest.create({ reqId, type: 'withdraw', userId, amount, address });
+    await PendingRequest.create({ reqId, type: 'withdraw', userId, amount: amt, address });
 
     res.json({ success: true, message: "Withdrawal request submitted successfully" });
 });
