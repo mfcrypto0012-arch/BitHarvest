@@ -1,17 +1,18 @@
 const express = require('express');
 const mongoose = require('mongoose');
-
 const app = express();
 
-// Environment Variables
-const BOT_TOKEN = process.env.BOT_TOKEN;
-const ADMIN_ID = process.env.ADMIN_ID;
-const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
+const BOT_TOKEN = '8655058369:AAGo-4rFve2eK21RbVk6CXc6e2_wwbrLCCQ';
+const ADMIN_ID = '7482625921';
+
+// MongoDB Atlas Connection URI
+const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://Bhi123:Bhi123456@cluster0.uowvpoy.mongodb.net/bitharvest?retryWrites=true&w=majority';
 
 mongoose.connect(MONGO_URI)
-    .then(() => console.log('Connected to MongoDB Successfully!'))
-    .catch(err => console.error('MongoDB Connection Error:', err));
+    .then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
+    .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
+// Mongoose User Schema
 const userSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
     username: { type: String, default: 'User' },
@@ -31,23 +32,11 @@ const userSchema = new mongoose.Schema({
         level2: { type: Number, default: 0 },
         level3: { type: Number, default: 0 }
     }
-}, { minimize: false });
+});
 
 const User = mongoose.model('User', userSchema);
 
-const pendingRequestSchema = new mongoose.Schema({
-    reqId: { type: String, required: true, unique: true },
-    type: { type: String, required: true },
-    userId: { type: String, required: true },
-    amount: { type: Number, required: true },
-    txHash: { type: String },
-    address: { type: String },
-    status: { type: String, default: 'PENDING' }
-});
-const PendingRequest = mongoose.model('PendingRequest', pendingRequestSchema);
-
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
@@ -56,33 +45,60 @@ app.use((req, res, next) => {
     next();
 });
 
+let pendingRequests = {};
+
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     try {
-        if (!BOT_TOKEN) return;
         let body = { chat_id: chatId, text: text, parse_mode: 'Markdown' };
         if (replyMarkup) body.reply_markup = replyMarkup;
-        
-        if (typeof fetch !== 'undefined') {
-            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
-            });
-        }
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
     } catch (e) {
-        console.log("Telegram Message Exception:", e.message);
+        console.log("Telegram API Error:", e);
     }
 }
 
-app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
-    res.sendStatus(200);
+async function editTelegramMessage(chatId, messageId, text, replyMarkup = null) {
     try {
-        const update = req.body;
-        if (update && update.message) {
+        let body = { chat_id: chatId, message_id: messageId, text: text, parse_mode: 'Markdown' };
+        if (replyMarkup) body.reply_markup = replyMarkup;
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+    } catch (e) {
+        console.log("Telegram Edit Error:", e);
+    }
+}
+
+async function answerCallbackQuery(callbackQueryId, text) {
+    try {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ callback_query_id: callbackQueryId, text: text })
+        });
+    } catch (e) {
+        console.log("Callback Answer Error:", e);
+    }
+}
+
+// Telegram Webhook Handler
+app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
+    const update = req.body;
+    res.sendStatus(200);
+
+    try {
+        if (update.message) {
             const msg = update.message;
             const chatId = String(msg.chat.id);
             const text = msg.text || '';
 
+            // --- /start Command & Referral Link Logic ---
             if (text.startsWith('/start')) {
                 const parts = text.split(' ');
                 const referrerId = parts[1] ? String(parts[1]) : null;
@@ -92,6 +108,9 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     user = new User({
                         id: chatId,
                         username: msg.from.username || msg.from.first_name || 'User',
+                        balance: 0,
+                        ghs: 0,
+                        lastClaimTime: Date.now(),
                         referredBy: referrerId || null
                     });
 
@@ -101,427 +120,346 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                             user.referredBy = referrerId;
                             if (!referrer.referrals.level1.includes(chatId)) {
                                 referrer.referrals.level1.push(chatId);
-                                await sendTelegramMessage(referrerId, `🎉 New Level 1 Referral Joined! ID: ${chatId}`);
+                                sendTelegramMessage(referrerId, `🎉 New Level 1 Referral Joined! ID: ${chatId}`);
+                            }
+
+                            const level2RefId = referrer.referredBy;
+                            if (level2RefId) {
+                                const level2User = await User.findOne({ id: level2RefId });
+                                if (level2User) {
+                                    if (!level2User.referrals.level2.includes(chatId)) {
+                                        level2User.referrals.level2.push(chatId);
+                                    }
+
+                                    const level3RefId = level2User.referredBy;
+                                    if (level3RefId) {
+                                        const level3User = await User.findOne({ id: level3RefId });
+                                        if (level3User && !level3User.referrals.level3.includes(chatId)) {
+                                            level3User.referrals.level3.push(chatId);
+                                        }
+                                        await level3User?.save();
+                                    }
+                                    await level2User.save();
+                                }
                             }
                             await referrer.save();
                         }
                     }
                     await user.save();
                 }
-                await sendTelegramMessage(chatId, "Welcome to BitHarvest Mining Mini App!");
-            } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
-                await sendTelegramMessage(chatId, `Admin Dashboard Access:`, {
-                    inline_keyboard: [[
-                        { text: "Open Admin Dashboard", url: `https://bitharvest-qtyp.onrender.com/admin/dashboard?key=${ADMIN_ID}` }
-                    ]]
-                });
+
+                await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the **Open BitHarvest** button below to launch the app.");
             }
-        }
-    } catch (err) {
-        console.log("Webhook Processing Error:", err);
-    }
-});
 
-app.get('/admin/dashboard', async (req, res) => {
-    try {
-        const adminKey = req.query.key;
-        if (adminKey !== ADMIN_ID) {
-            return res.status(403).send("<h1>403 Unauthorized Access!</h1>");
-        }
-
-        const requests = await PendingRequest.find({});
-        const totalUsers = await User.countDocuments();
-        const allUsers = await User.find({});
-
-        let totalBalances = allUsers.reduce((sum, u) => sum + (u.balance || 0), 0);
-        let totalPaidOut = 0;
-        allUsers.forEach(u => {
-            if (u.withdrawals) {
-                u.withdrawals.forEach(w => {
-                    if (w.status === 'PAID') totalPaidOut += parseFloat(w.amount || 0);
-                });
+            // --- Admin Panel Command ---
+            if (text === '/admin') {
+                if (chatId !== String(ADMIN_ID)) return;
+                await sendTelegramMessage(chatId, "👑 **Admin Panel Commands:**\n\n📊 `/stats` - Total Bot Users\n👤 `/user <id>` or `/users <id>` - Check User Details\n➕ `/addbal <id> <amount>` - Add Balance\n➖ `/cutbal <id> <amount>` - Cut Balance\n📢 `/broadcast <message>` - Send to All");
             }
-        });
 
-        let searchId = req.query.search ? req.query.search.trim() : '';
-        let searchedUser = null;
-        let userTotalDeposit = 0;
-        let userTotalWithdraw = 0;
-        let totalRefEarn = 0;
-
-        if (searchId) {
-            searchedUser = await User.findOne({
-                $or: [{ id: searchId }, { username: searchId.replace('@', '') }]
-            });
-
-            if (searchedUser) {
-                if (searchedUser.deposits) {
-                    searchedUser.deposits.forEach(d => {
-                        if (d.status === 'PAID') userTotalDeposit += parseFloat(d.amount || 0);
-                    });
-                }
-                if (searchedUser.withdrawals) {
-                    searchedUser.withdrawals.forEach(w => {
-                        if (w.status === 'PAID') userTotalWithdraw += parseFloat(w.amount || 0);
-                    });
-                }
-                let l1Earn = searchedUser.refEarnings?.level1 || 0;
-                let l2Earn = searchedUser.refEarnings?.level2 || 0;
-                let l3Earn = searchedUser.refEarnings?.level3 || 0;
-                totalRefEarn = l1Earn + l2Earn + l3Earn;
+            // --- Admin: Total Users Check (/stats) ---
+            if (text === '/stats') {
+                if (chatId !== String(ADMIN_ID)) return;
+                const totalUsers = await User.countDocuments();
+                await sendTelegramMessage(chatId, `📊 **Bot Statistics:**\n\n👥 **Total Registered Users:** ${totalUsers}`);
             }
-        }
 
-        let html = `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>BitHarvest Admin Panel</title>
-                <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <style>
-                    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-                    body { background: #09090b; color: #f4f4f5; margin: 0; padding: 20px; }
-                    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 1px solid #27272a; padding-bottom: 12px; }
-                    .header h1 { color: #f59e0b; margin: 0; font-size: 22px; }
-                    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 20px; }
-                    .stat-card { background: #18181b; border: 1px solid #27272a; border-radius: 8px; padding: 12px; }
-                    .stat-title { font-size: 10px; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.5px; }
-                    .stat-value { font-size: 18px; font-weight: bold; color: #f59e0b; margin-top: 4px; }
-                    .card { background: #18181b; border: 1px solid #27272a; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
-                    .card h3 { color: #f59e0b; margin-top: 0; font-size: 15px; border-bottom: 1px solid #27272a; padding-bottom: 8px; margin-bottom: 12px; }
-                    .search-box { display: flex; gap: 8px; }
-                    input, textarea { background: #09090b; border: 1px solid #3f3f46; color: #fff; padding: 8px 12px; border-radius: 6px; width: 100%; font-size: 13px; outline: none; }
-                    .btn { background: #f59e0b; color: #000; border: none; font-weight: 600; padding: 8px 16px; border-radius: 6px; cursor: pointer; }
-                    .btn-green { background: #22c55e; color: #fff; }
-                    .btn-red { background: #ef4444; color: #fff; }
-                    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-                    th, td { padding: 10px; text-align: left; border-bottom: 1px solid #27272a; font-size: 12px; }
-                    th { color: #a1a1aa; }
-                    .user-box { background: #09090b; padding: 12px; border-radius: 6px; border: 1px solid #27272a; margin-top: 10px; font-size: 12px; line-height: 1.6; }
-                </style>
-            </head>
-            <body>
-                <div class="header">
-                    <h1>BitHarvest Admin</h1>
-                    <span style="font-size: 11px; color: #22c55e; background: rgba(34,197,94,0.1); padding: 4px 8px; border-radius: 12px;">● Online</span>
-                </div>
+            // --- Admin: Check User Details ---
+            if (text.startsWith('/user') || text.startsWith('/users')) {
+                if (chatId !== String(ADMIN_ID)) return;
+                const targetId = text.split(' ')[1];
+                if (!targetId) return sendTelegramMessage(chatId, "⚠️ Usage: `/user <id>`");
+                
+                const u = await User.findOne({ id: targetId });
+                if (!u) return sendTelegramMessage(chatId, "User not found in database!");
 
-                <div class="stats-grid">
-                    <div class="stat-card"><div class="stat-title">Total Users</div><div class="stat-value">${totalUsers}</div></div>
-                    <div class="stat-card"><div class="stat-title">Total Balance</div><div class="stat-value">${totalBalances.toFixed(2)}</div></div>
-                    <div class="stat-card"><div class="stat-title">Paid Out</div><div class="stat-value">${totalPaidOut.toFixed(2)}</div></div>
-                    <div class="stat-card"><div class="stat-title">Pending Req</div><div class="stat-value">${requests.length}</div></div>
-                </div>
+                const totalDeposit = (u.deposits || [])
+                    .filter(d => d.status === 'PAID')
+                    .reduce((sum, d) => sum + parseFloat(d.amount || 0), 0);
 
-                <div class="card">
-                    <h3>Search User & Manage Balance</h3>
-                    <form method="GET" action="/admin/dashboard" class="search-box">
-                        <input type="hidden" name="key" value="${ADMIN_ID}">
-                        <input type="text" name="search" placeholder="Enter Telegram ID or Username" value="${searchId}">
-                        <button type="submit" class="btn">Search</button>
-                    </form>
+                const totalWithdraw = (u.withdrawals || [])
+                    .filter(w => w.status === 'PAID')
+                    .reduce((sum, w) => sum + parseFloat(w.amount || 0), 0);
 
-                    ${searchedUser ? `
-                        <div class="user-box">
-                            <p><b>User:</b> @${searchedUser.username} \vert{} <b>ID:</b> <code>${searchedUser.id}</code></p>
-                            <p><b>Balance:</b> ${searchedUser.balance.toFixed(4)} USDT \vert{} <b>GHS:</b>${searchedUser.ghs}</p>
-                            <p><b>Total Deposit:</b> ${userTotalDeposit.toFixed(2)} USDT \vert{} <b>Total Withdraw:</b>${userTotalWithdraw.toFixed(2)} USDT</p>
-                            <p><b>Referrals:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length \vert{}\vert{} 0} \vert{} L3: ${searchedUser.referrals?.level3?.length || 0}</p>
-                            <p><b>Ref Commission:</b> ${totalRefEarn.toFixed(4)} USDT</p>
-                            <hr style="border-color:#27272a; margin:8px 0;">
-                            <b>Quick Balance Adjust:</b>
-                            <div style="display:flex; gap:8px; margin-top:6px;">
-                                <input type="number" id="mod-amt" placeholder="Amount">
-                                <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">Add</button>
-                                <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">Deduct</button>
-                            </div>
-                        </div>
-                    ` : searchId ? `<p style="color:#ef4444; font-size:12px; margin-top:8px;">User not found!</p>` : ''}
-                </div>
+                const l1 = u.referrals?.level1?.length || 0;
+                const l2 = u.referrals?.level2?.length || 0;
+                const l3 = u.referrals?.level3?.length || 0;
+                const totalReferrals = l1 + l2 + l3;
 
-                <div class="card">
-                    <h3>Pending Requests</h3>
-                    ${requests.length === 0 ? `<p style="font-size:12px; color:#a1a1aa;">No pending requests found.</p>` : `
-                        <table>
-                            <tr><th>Type</th><th>User ID</th><th>Amount</th><th>Details</th><th>Action</th></tr>
-                            ${requests.map(r => `
-                                <tr>
-                                    <td><b style="color:${r.type==='deposit'?'#22c55e':'#ef4444'}">${r.type.toUpperCase()}</b></td>
-                                    <td><code>${r.userId}</code></td>
-                                    <td><b>${r.amount} USDT</b></td>
-                                    <td>${r.txHash ? 'Tx: ' + r.txHash.substring(0,8) + '...' : 'Addr: ' + (r.address ? r.address.substring(0,8) + '...' : 'N/A')}</td>
-                                    <td>
-                                        <button class="btn btn-green" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'approve')">Approve</button>
-                                        <button class="btn btn-red" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'reject')">Reject</button>
-                                    </td>
-                                </tr>
-                            `).join('')}
-                        </table>
-                    `}
-                </div>
+                const userDetailsMsg = `👤 **User Info (${targetId})**\n` +
+                    `Username: @${u.username}\n` +
+                    `Balance: ${u.balance.toFixed(4)} USDT\n` +
+                    `GHS Power: ${u.ghs}\n` +
+                    `Referred By: ${u.referredBy || 'None'}\n` +
+                    `👥 Total Referrals: ${totalReferrals} (L1:${l1}, L2: ${l2}, L3:${l3})\n` +
+                    `📥 Total Deposit: ${totalDeposit.toFixed(2)} USDT\n` +
+                    `📤 Total Withdraw: ${totalWithdraw.toFixed(2)} USDT`;
 
-                <div class="card">
-                    <h3>Broadcast Message</h3>
-                    <textarea id="bc-msg" rows="3" placeholder="Write message to send to all users..."></textarea>
-                    <button class="btn" style="margin-top:8px; width:100%;" onclick="sendBroadcast()">Send Broadcast</button>
-                </div>
+                await sendTelegramMessage(chatId, userDetailsMsg);
+            }
 
-                <script>
-                    async function handleReq(reqId, action) {
-                        let res = await fetch('/admin/action', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ reqId, action, adminKey: '${ADMIN_ID}' })
-                        });
-                        let data = await res.json();
-                        alert(data.message);
-                        location.reload();
-                    }
+            // --- Admin: Add Balance ---
+            if (text.startsWith('/addbal')) {
+                if (chatId !== String(ADMIN_ID)) return;
+                const parts = text.split(' ');
+                const targetId = parts[1];
+                const amount = parseFloat(parts[2]);
 
-                    async function modifyBal(userId, action) {
-                        let amount = document.getElementById('mod-amt').value;
-                        if(!amount) return alert("Please enter amount!");
-                        let res = await fetch('/admin/manage-balance', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ userId, amount, action, adminKey: '${ADMIN_ID}' })
-                        });
-                        let data = await res.json();
-                        alert(data.message);
-                        location.reload();
-                    }
+                if (!targetId || isNaN(amount)) return sendTelegramMessage(chatId, "⚠️ Usage: `/addbal <id> <amount>`");
+                const u = await User.findOne({ id: targetId });
+                if (!u) return sendTelegramMessage(chatId, "User not found!");
 
-                    async function sendBroadcast() {
-                        let message = document.getElementById('bc-msg').value;
-                        if(!message) return alert("Please type a message!");
-                        let res = await fetch('/admin/broadcast', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'},
-                            body: JSON.stringify({ message, adminKey: '${ADMIN_ID}' })
-                        });
-                        let data = await res.json();
-                        alert(data.message);
-                    }
-                </script>
-            </body>
-            </html>
-        `;
-        res.send(html);
-    } catch (err) {
-        res.status(500).send("Server Error: " + err.message);
-    }
-});
-
-app.post('/admin/action', async (req, res) => {
-    try {
-        const { reqId, action, adminKey } = req.body;
-        if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
-        const reqDoc = await PendingRequest.findOne({ reqId });
-        if (!reqDoc) return res.status(404).json({ success: false, message: "Request not found" });
-
-        const u = await User.findOne({ id: reqDoc.userId });
-
-        if (action === 'approve') {
-            if (reqDoc.type === 'deposit' && u) {
-                const depAmount = parseFloat(reqDoc.amount);
-                u.ghs += depAmount;
-
-                u.deposits = u.deposits.map(d => d.id === reqDoc.reqId ? { ...d, status: 'PAID' } : d);
-                u.markModified('deposits');
+                u.balance += amount;
                 await u.save();
+                sendTelegramMessage(chatId, `✅ Successfully added ${amount} USDT to User${targetId}`);
+                sendTelegramMessage(targetId, `💰 Admin added ${amount} USDT to your balance!`).catch(() => {});
+            }
 
-                if (u.referredBy) {
-                    let refL1 = await User.findOne({ id: u.referredBy });
-                    if (refL1) {
-                        let commL1 = depAmount * 0.15;
-                        refL1.balance += commL1;
-                        refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
-                        await refL1.save();
-                        sendTelegramMessage(refL1.id, `💰 Received +${commL1.toFixed(4)} USDT (15% Level 1 Referral Bonus)!`);
+            // --- Admin: Cut Balance ---
+            if (text.startsWith('/cutbal')) {
+                if (chatId !== String(ADMIN_ID)) return;
+                const parts = text.split(' ');
+                const targetId = parts[1];
+                const amount = parseFloat(parts[2]);
 
-                        if (refL1.referredBy) {
-                            let refL2 = await User.findOne({ id: refL1.referredBy });
-                            if (refL2) {
-                                let commL2 = depAmount * 0.02;
-                                refL2.balance += commL2;
-                                refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
-                                await refL2.save();
-                                sendTelegramMessage(refL2.id, `💰 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Bonus)!`);
+                if (!targetId || isNaN(amount)) return sendTelegramMessage(chatId, "⚠️ Usage: `/cutbal <id> <amount>`");
+                const u = await User.findOne({ id: targetId });
+                if (!u) return sendTelegramMessage(chatId, "User not found!");
 
-                                if (refL2.referredBy) {
-                                    let refL3 = await User.findOne({ id: refL2.referredBy });
-                                    if (refL3) {
-                                        let commL3 = depAmount * 0.01;
-                                        refL3.balance += commL3;
-                                        refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
-                                        await refL3.save();
-                                        sendTelegramMessage(refL3.id, `💰 Received +${commL3.toFixed(4)} USDT (1% Level 3 Referral Bonus)!`);
+                u.balance -= amount;
+                await u.save();
+                sendTelegramMessage(chatId, `✅ Successfully deducted ${amount} USDT from User${targetId}`);
+                sendTelegramMessage(targetId, `⚠️ Admin deducted ${amount} USDT from your balance.`).catch(() => {});
+            }
+
+            // --- Admin: Broadcast Message ---
+            if (text.startsWith('/broadcast')) {
+                if (chatId !== String(ADMIN_ID)) return;
+                const messageText = text.replace('/broadcast', '').trim();
+                if (!messageText) return sendTelegramMessage(chatId, "⚠️ Usage: `/broadcast <message>`");
+
+                const allUsers = await User.find({});
+                let count = 0;
+                for (let usr of allUsers) {
+                    sendTelegramMessage(usr.id, `📢 **Announcement:**\n\n${messageText}`).catch(() => {});
+                    count++;
+                }
+
+                sendTelegramMessage(chatId, `✅ Broadcast sent to ${count} users!`);
+            }
+
+        } else if (update.callback_query) {
+            const query = update.callback_query;
+            const chatId = String(query.message.chat.id);
+            const data = query.data;
+            const messageId = query.message.message_id;
+
+            if (data.startsWith('approve_') || data.startsWith('reject_')) {
+                if (chatId !== String(ADMIN_ID)) {
+                    return answerCallbackQuery(query.id, "Unauthorized!");
+                }
+
+                const isApprove = data.startsWith('approve_');
+                const reqKey = data.replace(isApprove ? 'approve_' : 'reject_', '');
+                const req = pendingRequests[reqKey];
+
+                if (!req) {
+                    return answerCallbackQuery(query.id, "Request already handled or expired!");
+                }
+
+                const u = await User.findOne({ id: req.userId });
+
+                if (isApprove) {
+                    if (req.type === 'deposit') {
+                        if (u) {
+                            const depAmount = parseFloat(req.amount);
+                            u.ghs += depAmount;
+                            const dep = u.deposits.find(d => d.id === req.reqId);
+                            if (dep) dep.status = 'PAID';
+
+                            // 3-Level Commission Distribution
+                            if (u.referredBy) {
+                                let l1User = await User.findOne({ id: u.referredBy });
+                                if (l1User) {
+                                    let comm1 = depAmount * 0.15;
+                                    l1User.balance += comm1;
+                                    l1User.refEarnings.level1 += comm1;
+                                    await l1User.save();
+                                    sendTelegramMessage(l1User.id, `🎁 Level 1 Commission Received: +${comm1.toFixed(4)} USDT!`);
+
+                                    if (l1User.referredBy) {
+                                        let l2User = await User.findOne({ id: l1User.referredBy });
+                                        if (l2User) {
+                                            let comm2 = depAmount * 0.02;
+                                            l2User.balance += comm2;
+                                            l2User.refEarnings.level2 += comm2;
+                                            await l2User.save();
+                                            sendTelegramMessage(l2User.id, `🎁 Level 2 Commission Received: +${comm2.toFixed(4)} USDT!`);
+
+                                            if (l2User.referredBy) {
+                                                let l3User = await User.findOne({ id: l3User.referredBy });
+                                                if (l3User) {
+                                                    let comm3 = depAmount * 0.01;
+                                                    l3User.balance += comm3;
+                                                    l3User.refEarnings.level3 += comm3;
+                                                    await l3User.save();
+                                                    sendTelegramMessage(l3User.id, `🎁 Level 3 Commission Received: +${comm3.toFixed(4)} USDT!`);
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
+                            await u.save();
                         }
+                        sendTelegramMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved!${req.amount} GHS Power added.`);
+                    } else if (req.type === 'withdraw') {
+                        if (u) {
+                            u.balance -= parseFloat(req.amount);
+                            const wd = u.withdrawals.find(w => w.id === req.reqId);
+                            if (wd) wd.status = 'PAID';
+                            await u.save();
+                        }
+                        sendTelegramMessage(req.userId, `✅ Your withdrawal of ${req.amount} USDT has been approved!`);
                     }
+                    editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${req.userId}\nAmount:${req.amount} USDT`);
+                } else {
+                    if (req.type === 'deposit') {
+                        if (u) {
+                            const dep = u.deposits.find(d => d.id === req.reqId);
+                            if (dep) dep.status = 'DECLINED';
+                            await u.save();
+                        }
+                        sendTelegramMessage(req.userId, `❌ Your deposit request of ${req.amount} USDT was rejected.`);
+                    } else if (req.type === 'withdraw') {
+                        if (u) {
+                            const wd = u.withdrawals.find(w => w.id === req.reqId);
+                            if (wd) wd.status = 'DECLINED';
+                            await u.save();
+                        }
+                        sendTelegramMessage(req.userId, `❌ Your withdrawal request of ${req.amount} USDT was rejected.`);
+                    }
+                    editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${req.userId}\nAmount:${req.amount} USDT`);
                 }
-                sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been APPROVED!`);
-            } else if (reqDoc.type === 'withdraw' && u) {
-                u.withdrawals = u.withdrawals.map(w => w.id === reqDoc.reqId ? { ...w, status: 'PAID' } : w);
-                u.markModified('withdrawals');
-                await u.save();
-                sendTelegramMessage(reqDoc.userId, `✅ Your withdrawal of ${reqDoc.amount} USDT has been APPROVED and sent!`);
-            }
-        } else {
-            if (reqDoc.type === 'deposit' && u) {
-                u.deposits = u.deposits.map(d => d.id === reqDoc.reqId ? { ...d, status: 'DECLINED' } : d);
-                u.markModified('deposits');
-                await u.save();
-                sendTelegramMessage(reqDoc.userId, `❌ Your deposit request of ${reqDoc.amount} USDT was DECLINED.`);
-            } else if (reqDoc.type === 'withdraw' && u) {
-                u.balance += parseFloat(reqDoc.amount);
-                u.withdrawals = u.withdrawals.map(w => w.id === reqDoc.reqId ? { ...w, status: 'DECLINED' } : w);
-                u.markModified('withdrawals');
-                await u.save();
-                sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request of ${reqDoc.amount} USDT was DECLINED and balance refunded.`);
+
+                delete pendingRequests[reqKey];
+                answerCallbackQuery(query.id, "Done!");
             }
         }
-
-        await PendingRequest.deleteOne({ reqId });
-        res.json({ success: true, message: `Request successfully ${action}d!` });
     } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+        console.log("Webhook error:", err);
     }
 });
 
-app.post('/admin/manage-balance', async (req, res) => {
-    try {
-        const { userId, amount, action, adminKey } = req.body;
-        if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
-        let u = await User.findOne({ id: userId });
-        if (!u) return res.status(404).json({ success: false, message: "User not found!" });
-
-        let amt = parseFloat(amount);
-        if (action === 'add') {
-            u.balance += amt;
-            sendTelegramMessage(userId, `🎁 Admin added +${amt} USDT to your account balance!`);
-        } else {
-            u.balance = Math.max(0, u.balance - amt);
-            sendTelegramMessage(userId, `⚠️ Admin deducted -${amt} USDT from your account balance.`);
-        }
-        await u.save();
-        res.json({ success: true, message: `Successfully ${action}ed ${amt} USDT!` });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
-    }
-});
-
-app.post('/admin/broadcast', async (req, res) => {
-    try {
-        const { message, adminKey } = req.body;
-        if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
-        const users = await User.find({});
-        for (let u of users) {
-            await sendTelegramMessage(u.id, message);
-        }
-        res.json({ success: true, message: "Broadcast sent successfully!" });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
-    }
-});
-
+// User Data API for Mini App
 app.get('/api/user/:userId', async (req, res) => {
-    try {
-        const userId = req.params.userId;
-        let user = await User.findOne({ id: userId });
-        if (!user) {
-            user = new User({ id: userId, username: 'User' });
-            await user.save();
-        }
-        res.json(user);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
+    const userId = req.params.userId;
+    let user = await User.findOne({ id: userId });
+    if (!user) {
+        user = new User({
+            id: userId,
+            username: 'User',
+            balance: 0,
+            ghs: 0,
+            lastClaimTime: Date.now()
+        });
+        await user.save();
     }
+    res.json(user);
 });
 
+// Claim Mining API
 app.post('/api/claim', async (req, res) => {
-    try {
-        const { userId } = req.body;
-        const u = await User.findOne({ id: userId });
-        if (!u) return res.status(400).json({ success: false, message: "User not found" });
+    const { userId } = req.body;
+    const u = await User.findOne({ id: userId });
+    if (!u) return res.status(400).json({ success: false, message: "User not found" });
 
-        let dailyProfit = u.ghs > 0 ? u.ghs * 0.3 : 0.01;
-        let perSecondRate = dailyProfit / 86400;
-        let elapsedSeconds = (Date.now() - u.lastClaimTime) / 1000;
-        let minedAmount = Math.max(0, elapsedSeconds * perSecondRate);
+    let dailyProfit = u.ghs > 0 ? u.ghs * 0.3 : 0.01;
+    let perSecondRate = dailyProfit / 86400;
+    let elapsedSeconds = (Date.now() - u.lastClaimTime) / 1000;
+    let MinedAmount = Math.max(0, elapsedSeconds * perSecondRate);
 
-        u.balance += minedAmount;
-        u.lastClaimTime = Date.now();
-        await u.save();
+    u.balance += MinedAmount;
+    u.lastClaimTime = Date.now();
+    await u.save();
 
-        res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
-    }
+    res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
 });
 
+// Deposit API
 app.post('/api/deposit', async (req, res) => {
-    try {
-        const { userId, username, amount, txHash } = req.body;
-        let amt = parseFloat(amount);
-        if (!userId || !amt || amt < 1 || amt > 1000) {
-            return res.status(400).json({ success: false, message: "Invalid amount (Min 1 USDT)" });
-        }
+    const { userId, username, amount, txHash } = req.body;
+    if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
 
-        let u = await User.findOne({ id: userId });
-        if (!u) u = new User({ id: userId, username: username || 'User' });
-
-        const reqId = 'dep_' + Date.now();
-        u.deposits.unshift({ id: reqId, amount: amt, txHash, status: 'PENDING', date: new Date().toLocaleDateString() });
-        u.markModified('deposits');
-        await u.save();
-
-        await PendingRequest.create({ reqId, type: 'deposit', userId, amount: amt, txHash });
-        res.json({ success: true, message: "Deposit request submitted successfully" });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+    let u = await User.findOne({ id: userId });
+    if (!u) {
+        u = new User({ id: userId, username: username || 'User', balance: 0, ghs: 0, lastClaimTime: Date.now() });
     }
+
+    const reqId = 'dep_' + Date.now();
+    const depositItem = { id: reqId, amount: amount, txHash: txHash, status: 'PENDING', date: new Date().toLocaleDateString() };
+    
+    u.deposits.unshift(depositItem);
+    await u.save();
+
+    pendingRequests[reqId] = { type: 'deposit', userId: userId, amount: amount, txHash: txHash, reqId: reqId };
+
+    const msgText = `📥 **New Deposit Request**\n\n` +
+                    `👤 **User:** ${username || userId} (ID: \`${userId}\`)\n` +
+                    `💰 **Amount:** ${amount} USDT\n` +
+                    `🔑 **TxHash:** \`${txHash}\``;
+
+    const keyboard = {
+        inline_keyboard: [
+            [{ text: "✅ Approve", callback_data: `approve_${reqId}` }, { text: "❌ Reject", callback_data: `reject_${reqId}` }]
+        ]
+    };
+
+    await sendTelegramMessage(ADMIN_ID, msgText, keyboard);
+    res.json({ success: true, message: "Deposit request submitted successfully" });
 });
 
+// Withdraw API
 app.post('/api/withdraw', async (req, res) => {
-    try {
-        const { userId, username, amount, address } = req.body;
-        let amt = parseFloat(amount);
-        if (!userId || !amt || !address) return res.status(400).json({ success: false, message: "Missing data" });
+    const { userId, username, amount, address } = req.body;
+    if (!userId || !amount || !address) return res.status(400).json({ success: false, message: "Missing data" });
 
-        let u = await User.findOne({ id: userId });
-        if (!u || u.balance < amt) {
-            return res.status(400).json({ success: false, message: "Insufficient balance" });
-        }
-
-        u.balance -= amt;
-        const reqId = 'wd_' + Date.now();
-        u.withdrawals.unshift({ id: reqId, amount: amt, address, status: 'PENDING', date: new Date().toLocaleDateString() });
-        u.markModified('withdrawals');
-        await u.save();
-
-        await PendingRequest.create({ reqId, type: 'withdraw', userId, amount: amt, address });
-        res.json({ success: true, message: "Withdrawal request submitted successfully" });
-    } catch (err) {
-        res.status(500).json({ success: false, message: err.message });
+    let u = await User.findOne({ id: userId });
+    if (!u || u.balance < parseFloat(amount)) {
+        return res.status(400).json({ success: false, message: "Insufficient balance" });
     }
+
+    const reqId = 'wd_' + Date.now();
+    const withdrawItem = { id: reqId, amount: amount, address: address, status: 'PENDING', date: new Date().toLocaleDateString() };
+
+    u.withdrawals.unshift(withdrawItem);
+    await u.save();
+
+    pendingRequests[reqId] = { type: 'withdraw', userId: userId, amount: amount, address: address, reqId: reqId };
+
+    const msgText = `📤 **New Withdrawal Request**\n\n` +
+                    `👤 **User:** ${username || userId} (ID: \`${userId}\`)\n` +
+                    `💰 **Amount:** ${amount} USDT\n` +
+                    `🏦 **Wallet Address:** \`${address}\``;
+
+    const keyboard = {
+        inline_keyboard: [
+            [{ text: "✅ Approve", callback_data: `approve_${reqId}` }, { text: "❌ Reject", callback_data: `reject_${reqId}` }]
+        ]
+    };
+
+    await sendTelegramMessage(ADMIN_ID, msgText, keyboard);
+    res.json({ success: true, message: "Withdrawal request submitted successfully" });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-    console.log(`Server running smoothly on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
+    const RENDER_URL = "https://bitharvest-qtyp.onrender.com";
     try {
-        const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
-        if (RENDER_URL && BOT_TOKEN && typeof fetch !== 'undefined') {
-            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/api/webhook/${BOT_TOKEN}`);
-            console.log("Telegram Webhook verified successfully.");
-        }
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/api/webhook/${BOT_TOKEN}`);
+        console.log("Telegram Webhook Set Successfully!");
     } catch (e) {
-        console.log("Webhook initialization info:", e.message);
+        console.log("Failed to set webhook:", e);
     }
 });
