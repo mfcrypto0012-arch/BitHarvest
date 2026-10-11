@@ -1,6 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const https = require('https');
+const axios = require('axios');
 
 const app = express();
 
@@ -12,7 +12,7 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
-// Schema Definition
+// User Schema
 const userSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
     username: { type: String, default: 'User' },
@@ -36,6 +36,7 @@ const userSchema = new mongoose.Schema({
 
 const User = mongoose.model('User', userSchema);
 
+// Pending Requests Schema
 const pendingRequestSchema = new mongoose.Schema({
     reqId: { type: String, required: true, unique: true },
     type: { type: String, required: true },
@@ -57,40 +58,18 @@ app.use((req, res, next) => {
     next();
 });
 
-// Built-in HTTPS Telegram Message Sender
-function sendTelegramMessage(chatId, text, replyMarkup = null) {
-    return new Promise((resolve, reject) => {
-        const data = JSON.stringify({
-            chat_id: chatId,
-            text: text,
-            parse_mode: 'Markdown',
-            reply_markup: replyMarkup
-        });
-
-        const options = {
-            hostname: 'api.telegram.org',
-            port: 443,
-            path: `/bot${BOT_TOKEN}/sendMessage`,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(data)
-            }
-        };
-
-        const req = https.request(options, (res) => {
-            let resData = '';
-            res.on('data', chunk => resData += chunk);
-            res.on('end', () => resolve(resData));
-        });
-
-        req.on('error', (e) => resolve(null));
-        req.write(data);
-        req.end();
-    });
+// Helper Function: Telegram Bot Message Sender via Axios
+async function sendTelegramMessage(chatId, text, replyMarkup = null) {
+    try {
+        let body = { chat_id: chatId, text: text, parse_mode: 'Markdown' };
+        if (replyMarkup) body.reply_markup = replyMarkup;
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, body);
+    } catch (e) {
+        console.log("Telegram API Error:", e.message);
+    }
 }
 
-// Telegram Webhook Handler (No deposit/withdraw alerts sent to bot)
+// Telegram Webhook (Only Handles Start Command & Admin Access Link)
 app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     const update = req.body;
     res.sendStatus(200);
@@ -126,7 +105,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     }
                     await user.save();
                 }
-                await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
+                await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick below to launch.");
             } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
                 await sendTelegramMessage(chatId, `👑 **BitHarvest Admin Access**\n\nClick below to open Admin Dashboard:`, {
                     inline_keyboard: [[
@@ -136,11 +115,11 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
             }
         }
     } catch (err) {
-        console.log("Webhook error:", err);
+        console.log("Webhook Error:", err);
     }
 });
 
-// Admin Panel Web View
+// Master Web Admin Dashboard Route
 app.get('/admin/dashboard', async (req, res) => {
     const adminKey = req.query.key;
     if (adminKey !== ADMIN_ID) {
@@ -225,7 +204,7 @@ app.get('/admin/dashboard', async (req, res) => {
         <body>
             <div class="header">
                 <h1>👑 BitHarvest Admin Panel</h1>
-                <span style="font-size: 12px; color: #22c55e;">● Live System</span>
+                <span style="font-size: 12px; color: #22c55e;">● System Live</span>
             </div>
 
             <div class="stats-grid">
@@ -346,7 +325,7 @@ app.get('/admin/dashboard', async (req, res) => {
     res.send(html);
 });
 
-// Admin Approve / Reject Endpoint with Guaranteed Status Updates (PAID / DECLINED)
+// Admin Approval/Rejection Logic (Updates User History Array to PAID / DECLINED)
 app.post('/admin/action', async (req, res) => {
     const { reqId, action, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -361,6 +340,7 @@ app.post('/admin/action', async (req, res) => {
             const depAmount = parseFloat(reqDoc.amount);
             u.ghs += depAmount;
 
+            // Change Deposit Status to PAID in User Array
             let updatedDeposits = u.deposits.map(d => {
                 if (d.id === reqDoc.reqId) {
                     return { ...d, status: 'PAID' };
@@ -371,7 +351,7 @@ app.post('/admin/action', async (req, res) => {
             u.markModified('deposits');
             await u.save();
 
-            // Multi-level Referral Commission
+            // Multi-level Referral Commission Logic
             if (u.referredBy) {
                 let refL1 = await User.findOne({ id: u.referredBy });
                 if (refL1) {
@@ -407,6 +387,7 @@ app.post('/admin/action', async (req, res) => {
 
             sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
         } else if (reqDoc.type === 'withdraw' && u) {
+            // Change Withdrawal Status to PAID in User Array
             let updatedWithdrawals = u.withdrawals.map(w => {
                 if (w.id === reqDoc.reqId) {
                     return { ...w, status: 'PAID' };
@@ -433,7 +414,7 @@ app.post('/admin/action', async (req, res) => {
 
             sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
         } else if (reqDoc.type === 'withdraw' && u) {
-            u.balance += parseFloat(reqDoc.amount); // Return balance on rejection
+            u.balance += parseFloat(reqDoc.amount); // Refund balance if rejected
             let updatedWithdrawals = u.withdrawals.map(w => {
                 if (w.id === reqDoc.reqId) {
                     return { ...w, status: 'DECLINED' };
@@ -452,6 +433,7 @@ app.post('/admin/action', async (req, res) => {
     res.json({ success: true, message: "Action executed successfully!" });
 });
 
+// Balance Add/Cut Endpoint
 app.post('/admin/manage-balance', async (req, res) => {
     const { userId, amount, action, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -471,6 +453,7 @@ app.post('/admin/manage-balance', async (req, res) => {
     res.json({ success: true, message: `Successfully ${action}ed ${amt} USDT for user ${userId}!` });
 });
 
+// Broadcast Message Endpoint
 app.post('/admin/broadcast', async (req, res) => {
     const { message, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -512,6 +495,7 @@ app.post('/api/claim', async (req, res) => {
     res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
 });
 
+// Deposit Submission API (No Telegram Alert Sent to Admin Bot)
 app.post('/api/deposit', async (req, res) => {
     const { userId, username, amount, txHash } = req.body;
     let amt = parseFloat(amount);
@@ -532,6 +516,7 @@ app.post('/api/deposit', async (req, res) => {
     res.json({ success: true, message: "Deposit request submitted successfully" });
 });
 
+// Withdraw Submission API (No Telegram Alert Sent to Admin Bot)
 app.post('/api/withdraw', async (req, res) => {
     const { userId, username, amount, address } = req.body;
     let amt = parseFloat(amount);
@@ -558,23 +543,11 @@ app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
     const RENDER_URL = process.env.RENDER_EXTERNAL_URL || "https://bitharvest-qtyp.onrender.com";
     try {
-        const webhookUrl = `${RENDER_URL}/api/webhook/${BOT_TOKEN}`;
-        const data = JSON.stringify({ url: webhookUrl });
-        const options = {
-            hostname: 'api.telegram.org',
-            port: 443,
-            path: `/bot${BOT_TOKEN}/setWebhook`,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(data)
-            }
-        };
-        const req = https.request(options);
-        req.write(data);
-        req.end();
-        console.log("Telegram Webhook Set Attempt Completed!");
+        await axios.post(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
+            url: `${RENDER_URL}/api/webhook/${BOT_TOKEN}`
+        });
+        console.log("Telegram Webhook Set Successfully!");
     } catch (e) {
-        console.log("Failed to set webhook:", e);
+        console.log("Webhook Set Error:", e.message);
     }
 });
