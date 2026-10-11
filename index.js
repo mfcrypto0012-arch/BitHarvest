@@ -1,6 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
-const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+const https = require('https');
 
 const app = express();
 
@@ -12,6 +12,7 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
+// Schema Definition
 const userSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
     username: { type: String, default: 'User' },
@@ -56,21 +57,40 @@ app.use((req, res, next) => {
     next();
 });
 
-async function sendTelegramMessage(chatId, text, replyMarkup = null) {
-    try {
-        let body = { chat_id: chatId, text: text, parse_mode: 'Markdown' };
-        if (replyMarkup) body.reply_markup = replyMarkup;
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
+// Built-in HTTPS Telegram Message Sender
+function sendTelegramMessage(chatId, text, replyMarkup = null) {
+    return new Promise((resolve, reject) => {
+        const data = JSON.stringify({
+            chat_id: chatId,
+            text: text,
+            parse_mode: 'Markdown',
+            reply_markup: replyMarkup
         });
-    } catch (e) {
-        console.log("Telegram API Error:", e);
-    }
+
+        const options = {
+            hostname: 'api.telegram.org',
+            port: 443,
+            path: `/bot${BOT_TOKEN}/sendMessage`,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(data)
+            }
+        };
+
+        const req = https.request(options, (res) => {
+            let resData = '';
+            res.on('data', chunk => resData += chunk);
+            res.on('end', () => resolve(resData));
+        });
+
+        req.on('error', (e) => resolve(null));
+        req.write(data);
+        req.end();
+    });
 }
 
-// Telegram Webhook Handler (No alerts for deposits/withdrawals sent to bot)
+// Telegram Webhook Handler (No deposit/withdraw alerts sent to bot)
 app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     const update = req.body;
     res.sendStatus(200);
@@ -538,8 +558,22 @@ app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
     const RENDER_URL = process.env.RENDER_EXTERNAL_URL || "https://bitharvest-qtyp.onrender.com";
     try {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/api/webhook/${BOT_TOKEN}`);
-        console.log("Telegram Webhook Set Successfully!");
+        const webhookUrl = `${RENDER_URL}/api/webhook/${BOT_TOKEN}`;
+        const data = JSON.stringify({ url: webhookUrl });
+        const options = {
+            hostname: 'api.telegram.org',
+            port: 443,
+            path: `/bot${BOT_TOKEN}/setWebhook`,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(data)
+            }
+        };
+        const req = https.request(options);
+        req.write(data);
+        req.end();
+        console.log("Telegram Webhook Set Attempt Completed!");
     } catch (e) {
         console.log("Failed to set webhook:", e);
     }
