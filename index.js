@@ -427,7 +427,7 @@ app.post('/admin/broadcast', async (req, res) => {
     }
 });
 
-app.get('/api/user/:userId', async (req, res) => {
+app.get('/api/user/:userId', async (req, res, next) => {
     try {
         const userId = req.params.userId;
         let user = await User.findOne({ id: userId });
@@ -441,7 +441,7 @@ app.get('/api/user/:userId', async (req, res) => {
     }
 });
 
-app.post('/api/claim', async (req, res) => {
+app.post('/api/claim', async (req, res, next) => {
     try {
         const { userId } = req.body;
         const u = await User.findOne({ id: userId });
@@ -462,7 +462,7 @@ app.post('/api/claim', async (req, res) => {
     }
 });
 
-app.post('/api/deposit', async (req, res) => {
+app.post('/api/deposit', async (req, res, next) => {
     try {
         const { userId, username, amount, txHash } = req.body;
         let amt = parseFloat(amount);
@@ -485,7 +485,7 @@ app.post('/api/deposit', async (req, res) => {
     }
 });
 
-app.post('/api/withdraw', async (req, res) => {
+app.post('/api/withdraw', async (req, res, next) => {
     try {
         const { userId, username, amount, address } = req.body;
         let amt = parseFloat(amount);
