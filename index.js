@@ -10,7 +10,6 @@ mongoose.connect(MONGO_URI)
     .then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
-// Mongoose Schemas
 const userSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
     username: { type: String, default: 'User' },
@@ -35,7 +34,7 @@ const User = mongoose.model('User', userSchema);
 
 const pendingRequestSchema = new mongoose.Schema({
     reqId: { type: String, required: true, unique: true },
-    type: { type: String, required: true }, // 'deposit' or 'withdraw'
+    type: { type: String, required: true },
     userId: { type: String, required: true },
     amount: { type: Number, required: true },
     txHash: { type: String },
@@ -54,7 +53,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// Helper Functions for Telegram Bot
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     try {
         let body = { chat_id: chatId, text: text, parse_mode: 'Markdown' };
@@ -95,7 +93,7 @@ async function answerCallbackQuery(callbackQueryId, text) {
     }
 }
 
-// Telegram Webhook Handler
+// Webhook Handler
 app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     const update = req.body;
     res.sendStatus(200);
@@ -133,7 +131,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                 }
                 await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
             } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
-                await sendTelegramMessage(chatId, `👑 **BitHarvest Admin Panel Access**\n\nClick below to open Full Admin Panel:`, {
+                await sendTelegramMessage(chatId, `👑 **BitHarvest Admin Access**\n\nClick below to open Admin Dashboard:`, {
                     inline_keyboard: [[
                         { text: "🌐 Open Admin Dashboard", url: `https://bitharvest-qtyp.onrender.com/admin/dashboard?key=${ADMIN_ID}` }
                     ]]
@@ -158,11 +156,47 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
 
                 if (isApprove) {
                     if (req.type === 'deposit' && u) {
-                        u.ghs += parseFloat(req.amount);
+                        const depAmount = parseFloat(req.amount);
+                        u.ghs += depAmount; // 1 USDT = 1 GHS
                         const dep = u.deposits.find(d => d.id === req.reqId);
                         if (dep) dep.status = 'PAID';
                         await u.save();
-                        sendTelegramMessage(req.userId, `✅ Your deposit of ${req.amount} USDT has been approved!`);
+
+                        // Multi-level referral commission distribution
+                        if (u.referredBy) {
+                            let refL1 = await User.findOne({ id: u.referredBy });
+                            if (refL1) {
+                                let commL1 = depAmount * 0.15; // 15%
+                                refL1.balance += commL1;
+                                refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
+                                await refL1.save();
+                                sendTelegramMessage(refL1.id, `🎁 Received +${commL1.toFixed(4)} USDT (15% Level 1 Referral Commission)!`);
+
+                                if (refL1.referredBy) {
+                                    let refL2 = await User.findOne({ id: refL1.referredBy });
+                                    if (refL2) {
+                                        let commL2 = depAmount * 0.02; // 2%
+                                        refL2.balance += commL2;
+                                        refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
+                                        await refL2.save();
+                                        sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
+
+                                        if (refL2.referredBy) {
+                                            let refL3 = await User.findOne({ id: refL2.referredBy });
+                                            if (refL3) {
+                                                let commL3 = depAmount * 0.01; // 1%
+                                                refL3.balance += commL3;
+                                                refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
+                                                await refL3.save();
+                                                sendTelegramMessage(refL3.id, `🎁 Received +${commL3.toFixed(4)} USDT (1% Level 3 Referral Commission)!`);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        sendTelegramMessage(req.userId, `✅ Your deposit of ${req.amount} USDT (${req.amount} GHS) has been approved!`);
                     } else if (req.type === 'withdraw' && u) {
                         u.balance -= parseFloat(req.amount);
                         const wd = u.withdrawals.find(w => w.id === req.reqId);
@@ -195,7 +229,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     }
 });
 
-// --- Master Admin UI Dashboard Route ---
+// Web Admin Dashboard Route
 app.get('/admin/dashboard', async (req, res) => {
     const adminKey = req.query.key;
     if (adminKey !== ADMIN_ID) {
@@ -218,10 +252,31 @@ app.get('/admin/dashboard', async (req, res) => {
 
     let searchId = req.query.search ? req.query.search.trim() : '';
     let searchedUser = null;
+    let userTotalDeposit = 0;
+    let userTotalWithdraw = 0;
+    let totalRefEarn = 0;
+
     if (searchId) {
         searchedUser = await User.findOne({
             $or: [{ id: searchId }, { username: searchId.replace('@', '') }]
         });
+
+        if (searchedUser) {
+            if (searchedUser.deposits) {
+                searchedUser.deposits.forEach(d => {
+                    if (d.status === 'PAID') userTotalDeposit += parseFloat(d.amount || 0);
+                });
+            }
+            if (searchedUser.withdrawals) {
+                searchedUser.withdrawals.forEach(w => {
+                    if (w.status === 'PAID') userTotalWithdraw += parseFloat(w.amount || 0);
+                });
+            }
+            let l1Earn = searchedUser.refEarnings?.level1 || 0;
+            let l2Earn = searchedUser.refEarnings?.level2 || 0;
+            let l3Earn = searchedUser.refEarnings?.level3 || 0;
+            totalRefEarn = l1Earn + l2Earn + l3Earn;
+        }
     }
 
     let html = `
@@ -253,16 +308,15 @@ app.get('/admin/dashboard', async (req, res) => {
                 th, td { padding: 10px; text-align: left; border-bottom: 1px solid #292524; font-size: 12px; }
                 th { color: #a8a29e; }
                 
-                .user-details-box { background: #0c0a09; padding: 12px; border-radius: 8px; border: 1px solid #292524; margin-top: 10px; font-size: 13px; line-height: 1.6; }
+                .user-details-box { background: #0c0a09; padding: 14px; border-radius: 8px; border: 1px solid #292524; margin-top: 10px; font-size: 13px; line-height: 1.8; }
             </style>
         </head>
         <body>
             <div class="header">
-                <h1>👑 BitHarvest Admin</h1>
-                <span style="font-size: 12px; color: #22c55e;">● Live Connected</span>
+                <h1>👑 BitHarvest Admin Panel</h1>
+                <span style="font-size: 12px; color: #22c55e;">● Live System</span>
             </div>
 
-            <!-- Stats Overview Grid -->
             <div class="stats-grid">
                 <div class="stat-card">
                     <div class="stat-title">Total Users</div>
@@ -282,26 +336,28 @@ app.get('/admin/dashboard', async (req, res) => {
                 </div>
             </div>
 
-            <!-- Search User Details Section -->
             <div class="card">
                 <h3>🔍 Search User Details & Manage Balance</h3>
                 <form method="GET" action="/admin/dashboard" class="search-box">
                     <input type="hidden" name="key" value="${ADMIN_ID}">
-                    <input type="text" name="search" placeholder="Search by Telegram User ID or Username" value="${searchId}">
+                    <input type="text" name="search" placeholder="Enter Telegram User ID or Username" value="${searchId}">
                     <button type="submit" class="btn">Search</button>
                 </form>
 
                 ${searchedUser ? `
                     <div class="user-details-box">
                         <p>👤 <b>User Name:</b> @${searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
-                        <p>💰 <b>Balance:</b> ${searchedUser.balance.toFixed(4)} USDT | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
+                        <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
+                        <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
+                        <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span></p>
                         <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
-                        <p>🔗 <b>Referred By:</b> ${searchedUser.referredBy || 'None'}</p>
+                        <p>🎁 <b>Total Referral Commission Earned:</b> <span style="color:#fbbf24; font-weight:bold;">${totalRefEarn.toFixed(4)} USDT</span> (L1: ${(searchedUser.refEarnings?.level1 || 0).toFixed(2)} | L2: ${(searchedUser.refEarnings?.level2 || 0).toFixed(2)} | L3: ${(searchedUser.refEarnings?.level3 || 0).toFixed(2)})</p>
+                        <p>🔗 <b>Referred By ID:</b> ${searchedUser.referredBy || 'Direct Join'}</p>
                         
-                        <hr style="border-color:#292524;">
-                        <b>⚙️ Balance Add / Cut:</b>
+                        <hr style="border-color:#292524; margin:12px 0;">
+                        <b>⚙️ Manage User Balance (Add / Cut):</b>
                         <div style="display:flex; gap:10px; margin-top:8px;">
-                            <input type="number" id="mod-amt" placeholder="Enter amount">
+                            <input type="number" id="mod-amt" placeholder="Enter USDT amount">
                             <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">+ Add</button>
                             <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">- Cut</button>
                         </div>
@@ -309,7 +365,6 @@ app.get('/admin/dashboard', async (req, res) => {
                 ` : searchId ? `<p style="color:#ef4444; font-size:12px;">User not found!</p>` : ''}
             </div>
 
-            <!-- Pending Deposit & Withdrawal Requests -->
             <div class="card">
                 <h3>⏳ Pending Requests (Deposit & Withdraw)</h3>
                 ${requests.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No pending requests right now.</p>` : `
@@ -331,7 +386,6 @@ app.get('/admin/dashboard', async (req, res) => {
                 `}
             </div>
 
-            <!-- Broadcast Section -->
             <div class="card">
                 <h3>📢 Broadcast Message to All Users</h3>
                 <textarea id="bc-msg" placeholder="Write message to send to all bot users..."></textarea>
@@ -381,7 +435,7 @@ app.get('/admin/dashboard', async (req, res) => {
     res.send(html);
 });
 
-// Admin Action Handlers
+// Admin Action Endpoints
 app.post('/admin/action', async (req, res) => {
     const { reqId, action, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -393,10 +447,46 @@ app.post('/admin/action', async (req, res) => {
 
     if (action === 'approve') {
         if (reqDoc.type === 'deposit' && u) {
-            u.ghs += parseFloat(reqDoc.amount);
+            const depAmount = parseFloat(reqDoc.amount);
+            u.ghs += depAmount;
             const dep = u.deposits.find(d => d.id === reqDoc.reqId);
             if (dep) dep.status = 'PAID';
             await u.save();
+
+            // Multi-level referral commission distribution via Web Admin
+            if (u.referredBy) {
+                let refL1 = await User.findOne({ id: u.referredBy });
+                if (refL1) {
+                    let commL1 = depAmount * 0.15;
+                    refL1.balance += commL1;
+                    refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
+                    await refL1.save();
+                    sendTelegramMessage(refL1.id, `🎁 Received +${commL1.toFixed(4)} USDT (15% Level 1 Referral Commission)!`);
+
+                    if (refL1.referredBy) {
+                        let refL2 = await User.findOne({ id: refL1.referredBy });
+                        if (refL2) {
+                            let commL2 = depAmount * 0.02;
+                            refL2.balance += commL2;
+                            refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
+                            await refL2.save();
+                            sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
+
+                            if (refL2.referredBy) {
+                                let refL3 = await User.findOne({ id: refL2.referredBy });
+                                if (refL3) {
+                                    let commL3 = depAmount * 0.01;
+                                    refL3.balance += commL3;
+                                    refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
+                                    await refL3.save();
+                                    sendTelegramMessage(refL3.id, `🎁 Received +${commL3.toFixed(4)} USDT (1% Level 3 Referral Commission)!`);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
         } else if (reqDoc.type === 'withdraw' && u) {
             u.balance -= parseFloat(reqDoc.amount);
@@ -485,19 +575,22 @@ app.post('/api/claim', async (req, res) => {
 
 app.post('/api/deposit', async (req, res) => {
     const { userId, username, amount, txHash } = req.body;
-    if (!userId || !amount) return res.status(400).json({ success: false, message: "Missing data" });
+    let amt = parseFloat(amount);
+    if (!userId || !amt || amt < 1 || amt > 1000) {
+        return res.status(400).json({ success: false, message: "Invalid amount. Min 1$ & Max 1000$" });
+    }
 
     let u = await User.findOne({ id: userId });
     if (!u) u = new User({ id: userId, username: username || 'User' });
 
     const reqId = 'dep_' + Date.now();
-    u.deposits.unshift({ id: reqId, amount, txHash, status: 'PENDING', date: new Date().toLocaleDateString() });
+    u.deposits.unshift({ id: reqId, amount: amt, txHash, status: 'PENDING', date: new Date().toLocaleDateString() });
     await u.save();
 
-    await PendingRequest.create({ reqId, type: 'deposit', userId, amount, txHash });
+    await PendingRequest.create({ reqId, type: 'deposit', userId, amount: amt, txHash });
 
     if (ADMIN_ID) {
-        const msgText = `📥 **New Deposit Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amount} USDT**\n🔑 TxHash: \`${txHash}\``;
+        const msgText = `📥 **New Deposit Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amt} USDT**\n🔑 TxHash: \`${txHash}\``;
         const inlineKeyboard = {
             inline_keyboard: [[
                 { text: "✅ Approve", callback_data: `approve_${reqId}` },
