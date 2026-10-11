@@ -2,7 +2,6 @@ const express = require('express');
 const mongoose = require('mongoose');
 const app = express();
 
-// حساس معلومات Render Environment Variables سے لی جا رہی ہیں
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_ID;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
@@ -34,7 +33,7 @@ const userSchema = new mongoose.Schema({
 });
 const User = mongoose.model('User', userSchema);
 
-// MongoDB Pending Requests Schema (ڈیٹا محفوظ رکھنے کے لیے)
+// MongoDB Pending Requests Schema
 const pendingRequestSchema = new mongoose.Schema({
     reqId: { type: String, required: true, unique: true },
     type: { type: String, required: true }, // 'deposit' or 'withdraw'
@@ -132,7 +131,13 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     }
                     await user.save();
                 }
-                await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the button below to launch.");
+                await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
+            } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
+                await sendTelegramMessage(chatId, `👑 **Admin Access Granted**\n\nClick below to view the Web Admin Panel:`, {
+                    inline_keyboard: [[
+                        { text: "🌐 Open Admin Panel", url: `https://bitharvest-qtyp.onrender.com/admin/dashboard?key=${ADMIN_ID}` }
+                    ]]
+                });
             }
         } else if (update.callback_query) {
             const query = update.callback_query;
@@ -170,7 +175,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         }
                         sendTelegramMessage(req.userId, `✅ Your withdrawal of ${req.amount} USDT has been approved!`);
                     }
-                    editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${req.userId}\nAmount: ${req.amount} USDT`);
+                    editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${req.userId}\nAmount:${req.amount} USDT`);
                 } else {
                     if (req.type === 'deposit' && u) {
                         const dep = u.deposits.find(d => d.id === req.reqId);
@@ -181,7 +186,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         if (wd) wd.status = 'DECLINED';
                         await u.save();
                     }
-                    editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${req.userId}\nAmount: ${req.amount} USDT`);
+                    editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${req.userId}\nAmount:${req.amount} USDT`);
                 }
 
                 await PendingRequest.deleteOne({ reqId });
@@ -193,14 +198,14 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     }
 });
 
-// --- Web Admin Dashboard Route ---
+// Admin Dashboard Route
 app.get('/admin/dashboard', async (req, res) => {
     const adminKey = req.query.key;
     if (adminKey !== ADMIN_ID) {
         return res.status(403).send("<h1>Unauthorized Access! Invalid key.</h1>");
     }
 
-    const requests = await PendingRequest.find({ status: 'PENDING' });
+    const requests = await PendingRequest.find({});
     const totalUsers = await User.countDocuments();
 
     let html = `
@@ -264,13 +269,13 @@ app.post('/admin/action', async (req, res) => {
 
     if (action === 'approve') {
         if (reqDoc.type === 'deposit' && u) {
-            u.ghs += reqDoc.amount;
+            u.ghs += parseFloat(reqDoc.amount);
             const dep = u.deposits.find(d => d.id === reqDoc.reqId);
             if (dep) dep.status = 'PAID';
             await u.save();
             sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT approved via Web Admin!`);
         } else if (reqDoc.type === 'withdraw' && u) {
-            u.balance -= reqDoc.amount;
+            u.balance -= parseFloat(reqDoc.amount);
             const wd = u.withdrawals.find(w => w.id === reqDoc.reqId);
             if (wd) wd.status = 'PAID';
             await u.save();
@@ -337,6 +342,20 @@ app.post('/api/deposit', async (req, res) => {
 
     await PendingRequest.create({ reqId, type: 'deposit', userId, amount, txHash });
 
+    // Send Notification to Admin Telegram with Approve / Reject Inline Buttons
+    if (ADMIN_ID) {
+        const msgText = `📥 **New Deposit Request**\n\n👤 User: @${username} (ID: \`${userId}\`)\n💰 Amount: **${amount} USDT**\n🔑 TxHash: \`${txHash}\``;
+        const inlineKeyboard = {
+            inline_keyboard: [
+                [
+                    { text: "✅ Approve", callback_data: `approve_${reqId}` },
+                    { text: "❌ Reject", callback_data: `reject_${reqId}` }
+                ]
+            ]
+        };
+        await sendTelegramMessage(ADMIN_ID, msgText, inlineKeyboard);
+    }
+
     res.json({ success: true, message: "Deposit request submitted successfully" });
 });
 
@@ -354,6 +373,20 @@ app.post('/api/withdraw', async (req, res) => {
     await u.save();
 
     await PendingRequest.create({ reqId, type: 'withdraw', userId, amount, address });
+
+    // Send Notification to Admin Telegram with Approve / Reject Inline Buttons
+    if (ADMIN_ID) {
+        const msgText = `📤 **New Withdraw Request**\n\n👤 User: @${username} (ID: \`${userId}\`)\n💰 Amount: **${amount} USDT**\n🏦 Address: \`${address}\``;
+        const inlineKeyboard = {
+            inline_keyboard: [
+                [
+                    { text: "✅ Approve", callback_data: `approve_${reqId}` },
+                    { text: "❌ Reject", callback_data: `reject_${reqId}` }
+                ]
+            ]
+        };
+        await sendTelegramMessage(ADMIN_ID, msgText, inlineKeyboard);
+    }
 
     res.json({ success: true, message: "Withdrawal request submitted successfully" });
 });
