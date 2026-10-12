@@ -7,8 +7,8 @@ const ADMIN_ID = process.env.ADMIN_ID;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 
 mongoose.connect(MONGO_URI)
-    .then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
-    .catch(err => console.error('❌ MongoDB Connection Error:', err));
+.then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
+.catch(err => console.error('❌ MongoDB Connection Error:', err));
 
 const userSchema = new mongoose.Schema({
     id: { type: String, required: true, unique: true },
@@ -105,35 +105,56 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
 
             if (text.startsWith('/start')) {
                 const parts = text.split(' ');
-                const referrerId = parts[1] ? String(parts[1]) : null;
+                const referrerId = parts[1] ? String(parts[1]).trim() : null;
 
                 let user = await User.findOne({ id: chatId });
                 if (!user) {
                     user = new User({
                         id: chatId,
                         username: msg.from.username || msg.from.first_name || 'User',
-                        referredBy: referrerId || null
+                        referredBy: (referrerId && referrerId !== chatId) ? referrerId : null
                     });
 
                     if (referrerId && referrerId !== chatId) {
-                        const referrer = await User.findOne({ id: referrerId });
-                        if (referrer) {
-                            user.referredBy = referrerId;
-                            if (!referrer.referrals.level1.includes(chatId)) {
-                                referrer.referrals.level1.push(chatId);
-                                sendTelegramMessage(referrerId, `🎉 New Level 1 Referral Joined! ID: ${chatId}`);
+                        const refL1 = await User.findOne({ id: referrerId });
+                        if (refL1) {
+                            if (!refL1.referrals.level1.includes(chatId)) {
+                                refL1.referrals.level1.push(chatId);
+                                refL1.markModified('referrals');
+                                await refL1.save();
+                                sendTelegramMessage(referrerId, `🎉 *New Level 1 Referral Joined!*\nUser ID: \`${chatId}\``);
                             }
-                            await referrer.save();
+
+                            if (refL1.referredBy) {
+                                const refL2 = await User.findOne({ id: refL1.referredBy });
+                                if (refL2) {
+                                    if (!refL2.referrals.level2.includes(chatId)) {
+                                        refL2.referrals.level2.push(chatId);
+                                        refL2.markModified('referrals');
+                                        await refL2.save();
+                                    }
+
+                                    if (refL2.referredBy) {
+                                        const refL3 = await User.findOne({ id: refL2.referredBy });
+                                        if (refL3) {
+                                            if (!refL3.referrals.level3.includes(chatId)) {
+                                                refL3.referrals.level3.push(chatId);
+                                                refL3.markModified('referrals');
+                                                await refL3.save();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     await user.save();
                 }
+
                 await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
             } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
                 await sendTelegramMessage(chatId, `👑 **BitHarvest Admin Access**\n\nClick below to open Admin Dashboard:`, {
-                    inline_keyboard: [[
-                        { text: "🌐 Open Admin Dashboard", url: `https://bitharvest-qtyp.onrender.com/admin/dashboard?key=${ADMIN_ID}` }
-                    ]]
+                    inline_keyboard: [[ { text: "🌐 Open Admin Dashboard", url: `https://bitharvest-qtyp.onrender.com/admin/dashboard?key=${ADMIN_ID}` } ]]
                 });
             }
         } else if (update.callback_query) {
@@ -156,8 +177,8 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                 if (isApprove) {
                     if (reqDoc.type === 'deposit' && u) {
                         const depAmount = parseFloat(reqDoc.amount);
-                        u.ghs += depAmount; // 1 USDT = 1 GHS
-                        
+                        u.ghs += depAmount;
+
                         let idx = u.deposits.findIndex(d => d.id === reqId || d.id === reqDoc.reqId);
                         if (idx !== -1) {
                             u.deposits[idx].status = 'PAID';
@@ -168,31 +189,33 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         u.markModified('deposits');
                         await u.save();
 
-                        // Multi-level referral commission distribution
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
-                                let commL1 = depAmount * 0.15; // 15%
+                                let commL1 = depAmount * 0.15;
                                 refL1.balance += commL1;
                                 refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
+                                refL1.markModified('refEarnings');
                                 await refL1.save();
                                 sendTelegramMessage(refL1.id, `🎁 Received +${commL1.toFixed(4)} USDT (15% Level 1 Referral Commission)!`);
 
                                 if (refL1.referredBy) {
                                     let refL2 = await User.findOne({ id: refL1.referredBy });
                                     if (refL2) {
-                                        let commL2 = depAmount * 0.02; // 2%
+                                        let commL2 = depAmount * 0.02;
                                         refL2.balance += commL2;
                                         refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
+                                        refL2.markModified('refEarnings');
                                         await refL2.save();
                                         sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
 
                                         if (refL2.referredBy) {
                                             let refL3 = await User.findOne({ id: refL2.referredBy });
                                             if (refL3) {
-                                                let commL3 = depAmount * 0.01; // 1%
+                                                let commL3 = depAmount * 0.01;
                                                 refL3.balance += commL3;
                                                 refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
+                                                refL3.markModified('refEarnings');
                                                 await refL3.save();
                                                 sendTelegramMessage(refL3.id, `🎁 Received +${commL3.toFixed(4)} USDT (1% Level 3 Referral Commission)!`);
                                             }
@@ -205,7 +228,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
                     } else if (reqDoc.type === 'withdraw' && u) {
                         u.balance -= parseFloat(reqDoc.amount);
-                        
+
                         let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
                         if (idx !== -1) {
                             u.withdrawals[idx].status = 'PAID';
@@ -217,6 +240,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `✅ Your withdrawal of ${reqDoc.amount} USDT has been approved!`);
                     }
+
                     editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${reqDoc.userId}\nAmount:${reqDoc.amount} USDT`);
                 } else {
                     if (reqDoc.type === 'deposit' && u) {
@@ -229,7 +253,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         }
                         u.markModified('deposits');
                         await u.save();
-                        sendTelegramMessage(reqDoc.userId, `❌ Your deposit was rejected.`);
+                        sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
                     } else if (reqDoc.type === 'withdraw' && u) {
                         let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
                         if (idx !== -1) {
@@ -240,8 +264,9 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         }
                         u.markModified('withdrawals');
                         await u.save();
-                        sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal was rejected.`);
+                        sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined.`);
                     }
+
                     editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${reqDoc.userId}\nAmount:${reqDoc.amount} USDT`);
                 }
 
@@ -310,28 +335,24 @@ app.get('/admin/dashboard', async (req, res) => {
             <title>BitHarvest Admin Panel</title>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
-                * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+                * { box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
                 body { background: #0c0a09; color: #f3f4f6; margin: 0; padding: 20px; }
                 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
                 .header h1 { color: #f59e0b; margin: 0; font-size: 24px; }
                 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 25px; }
-                .stat-card { background: #1c1917; border: 1px solid #292524; border-radius: 12px; padding: 15px; text-align: left; }
-                .stat-title { font-size: 11px; color: #a8a29e; text-transform: uppercase; letter-spacing: 0.5px; }
+                .stat-card { background: #1c1917; border: 1px solid #292524; border-radius: 12px; padding: 15px; }
+                .stat-title { font-size: 11px; color: #a8a29e; text-transform: uppercase; }
                 .stat-value { font-size: 20px; font-weight: bold; color: #fbbf24; margin-top: 6px; }
-                
                 .card { background: #1c1917; border: 1px solid #292524; border-radius: 12px; padding: 18px; margin-bottom: 20px; }
                 .card h3 { color: #f59e0b; margin-top: 0; font-size: 16px; border-bottom: 1px solid #292524; padding-bottom: 8px; }
-                
                 .search-box { display: flex; gap: 10px; margin-bottom: 15px; }
                 input, textarea { background: #0c0a09; border: 1px solid #44403c; color: #fff; padding: 10px; border-radius: 8px; width: 100%; font-size: 14px; }
                 .btn { background: #f59e0b; color: #000; border: none; font-weight: bold; padding: 10px 18px; border-radius: 8px; cursor: pointer; }
                 .btn-green { background: #22c55e; color: #fff; }
                 .btn-red { background: #ef4444; color: #fff; }
-
                 table { width: 100%; border-collapse: collapse; margin-top: 10px; }
                 th, td { padding: 10px; text-align: left; border-bottom: 1px solid #292524; font-size: 12px; }
                 th { color: #a8a29e; }
-                
                 .user-details-box { background: #0c0a09; padding: 14px; border-radius: 8px; border: 1px solid #292524; margin-top: 10px; font-size: 13px; line-height: 1.8; }
             </style>
         </head>
@@ -340,26 +361,12 @@ app.get('/admin/dashboard', async (req, res) => {
                 <h1>👑 BitHarvest Admin Panel</h1>
                 <span style="font-size: 12px; color: #22c55e;">● Live System</span>
             </div>
-
             <div class="stats-grid">
-                <div class="stat-card">
-                    <div class="stat-title">Total Users</div>
-                    <div class="stat-value">${totalUsers}</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-title">User Balances</div>
-                    <div class="stat-value">${totalBalances.toFixed(2)} USDT</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-title">Paid Out</div>
-                    <div class="stat-value">${totalPaidOut.toFixed(2)} USDT</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-title">Pending Requests</div>
-                    <div class="stat-value">${requests.length}</div>
-                </div>
+                <div class="stat-card"><div class="stat-title">Total Users</div><div class="stat-value">${totalUsers}</div></div>
+                <div class="stat-card"><div class="stat-title">User Balances</div><div class="stat-value">${totalBalances.toFixed(2)} USDT</div></div>
+                <div class="stat-card"><div class="stat-title">Paid Out</div><div class="stat-value">${totalPaidOut.toFixed(2)} USDT</div></div>
+                <div class="stat-card"><div class="stat-title">Pending Requests</div><div class="stat-value">${requests.length}</div></div>
             </div>
-
             <div class="card">
                 <h3>🔍 Search User Details & Manage Balance</h3>
                 <form method="GET" action="/admin/dashboard" class="search-box">
@@ -367,7 +374,6 @@ app.get('/admin/dashboard', async (req, res) => {
                     <input type="text" name="search" placeholder="Enter Telegram User ID or Username" value="${searchId}">
                     <button type="submit" class="btn">Search</button>
                 </form>
-
                 ${searchedUser ? `
                     <div class="user-details-box">
                         <p>👤 <b>User Name:</b> @${searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
@@ -375,11 +381,10 @@ app.get('/admin/dashboard', async (req, res) => {
                         <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
                         <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span></p>
                         <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
-                        <p>🎁 <b>Total Referral Commission Earned:</b> <span style="color:#fbbf24; font-weight:bold;">${totalRefEarn.toFixed(4)} USDT</span> (L1: ${(searchedUser.refEarnings?.level1 || 0).toFixed(2)} | L2: ${(searchedUser.refEarnings?.level2 || 0).toFixed(2)} | L3: ${(searchedUser.refEarnings?.level3 || 0).toFixed(2)})</p>
+                        <p>🎁 <b>Total Referral Commission:</b> <span style="color:#fbbf24; font-weight:bold;">${totalRefEarn.toFixed(4)} USDT</span></p>
                         <p>🔗 <b>Referred By ID:</b> ${searchedUser.referredBy || 'Direct Join'}</p>
-                        
                         <hr style="border-color:#292524; margin:12px 0;">
-                        <b>⚙️ Manage User Balance (Add / Cut):</b>
+                        <b>⚙️ Manage User Balance:</b>
                         <div style="display:flex; gap:10px; margin-top:8px;">
                             <input type="number" id="mod-amt" placeholder="Enter USDT amount">
                             <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">+ Add</button>
@@ -388,18 +393,17 @@ app.get('/admin/dashboard', async (req, res) => {
                     </div>
                 ` : searchId ? `<p style="color:#ef4444; font-size:12px;">User not found!</p>` : ''}
             </div>
-
             <div class="card">
-                <h3>⏳ Pending Requests (Deposit & Withdraw)</h3>
+                <h3>⏳ Pending Requests</h3>
                 ${requests.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No pending requests right now.</p>` : `
                     <table>
                         <tr><th>Type</th><th>User ID</th><th>Amount</th><th>Details</th><th>Action</th></tr>
                         ${requests.map(r => `
                             <tr>
-                                <td><b style="color:${r.type==='deposit'?'#22c55e':'#ef4444'}">${r.type.toUpperCase()}</b></td>
+                                <td><b style="color:${r.type === 'deposit' ? '#22c55e' : '#ef4444'}">${r.type.toUpperCase()}</b></td>
                                 <td>${r.userId}</td>
                                 <td><b>${r.amount} USDT</b></td>
-                                <td>${r.txHash ? 'Tx: ' + r.txHash.substring(0,10) + '...' : 'Addr: ' + r.address.substring(0,10) + '...'}</td>
+                                <td>${r.txHash ? 'Tx: ' + r.txHash.substring(0, 10) + '...' : 'Addr: ' + r.address.substring(0, 10) + '...'}</td>
                                 <td>
                                     <button class="btn btn-green" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'approve')">Approve</button>
                                     <button class="btn btn-red" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'reject')">Reject</button>
@@ -409,48 +413,28 @@ app.get('/admin/dashboard', async (req, res) => {
                     </table>
                 `}
             </div>
-
-            <div class="card">
-                <h3>📢 Broadcast Message to All Users</h3>
-                <textarea id="bc-msg" placeholder="Write message to send to all bot users..."></textarea>
-                <button class="btn" style="margin-top:10px; width:100%;" onclick="sendBroadcast()">Send Broadcast Message</button>
-            </div>
-
             <script>
                 async function handleReq(reqId, action) {
                     let res = await fetch('/admin/action', {
                         method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ reqId, action, adminKey: '${ADMIN_ID}' })
                     });
                     let data = await res.json();
                     alert(data.message);
                     location.reload();
                 }
-
                 async function modifyBal(userId, action) {
                     let amount = document.getElementById('mod-amt').value;
-                    if(!amount) return alert("Enter amount!");
+                    if (!amount) return alert("Enter amount!");
                     let res = await fetch('/admin/manage-balance', {
                         method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
+                        headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ userId, amount, action, adminKey: '${ADMIN_ID}' })
                     });
                     let data = await res.json();
                     alert(data.message);
                     location.reload();
-                }
-
-                async function sendBroadcast() {
-                    let message = document.getElementById('bc-msg').value;
-                    if(!message) return alert("Type message!");
-                    let res = await fetch('/admin/broadcast', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ message, adminKey: '${ADMIN_ID}' })
-                    });
-                    let data = await res.json();
-                    alert(data.message);
                 }
             </script>
         </body>
@@ -472,7 +456,7 @@ app.post('/admin/action', async (req, res) => {
         if (reqDoc.type === 'deposit' && u) {
             const depAmount = parseFloat(reqDoc.amount);
             u.ghs += depAmount;
-            
+
             let idx = u.deposits.findIndex(d => d.id === reqId || d.id === reqDoc.reqId);
             if (idx !== -1) {
                 u.deposits[idx].status = 'PAID';
@@ -489,6 +473,7 @@ app.post('/admin/action', async (req, res) => {
                     let commL1 = depAmount * 0.15;
                     refL1.balance += commL1;
                     refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
+                    refL1.markModified('refEarnings');
                     await refL1.save();
                     sendTelegramMessage(refL1.id, `🎁 Received +${commL1.toFixed(4)} USDT (15% Level 1 Referral Commission)!`);
 
@@ -498,6 +483,7 @@ app.post('/admin/action', async (req, res) => {
                             let commL2 = depAmount * 0.02;
                             refL2.balance += commL2;
                             refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
+                            refL2.markModified('refEarnings');
                             await refL2.save();
                             sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
 
@@ -507,6 +493,7 @@ app.post('/admin/action', async (req, res) => {
                                     let commL3 = depAmount * 0.01;
                                     refL3.balance += commL3;
                                     refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
+                                    refL3.markModified('refEarnings');
                                     await refL3.save();
                                     sendTelegramMessage(refL3.id, `🎁 Received +${commL3.toFixed(4)} USDT (1% Level 3 Referral Commission)!`);
                                 }
@@ -519,7 +506,7 @@ app.post('/admin/action', async (req, res) => {
             sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
         } else if (reqDoc.type === 'withdraw' && u) {
             u.balance -= parseFloat(reqDoc.amount);
-            
+
             let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
             if (idx !== -1) {
                 u.withdrawals[idx].status = 'PAID';
@@ -565,128 +552,125 @@ app.post('/admin/manage-balance', async (req, res) => {
     const { userId, amount, action, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
 
-    let u = await User.findOne({ id: userId });
+    const u = await User.findOne({ id: userId });
     if (!u) return res.status(404).json({ success: false, message: "User not found!" });
 
-    let amt = parseFloat(amount);
+    const val = parseFloat(amount);
+    if (isNaN(val) || val <= 0) return res.status(400).json({ success: false, message: "Invalid amount!" });
+
     if (action === 'add') {
-        u.balance += amt;
-        sendTelegramMessage(userId, `🎁 Admin added +${amt} USDT to your balance!`);
-    } else {
-        u.balance = Math.max(0, u.balance - amt);
-        sendTelegramMessage(userId, `⚠️ Admin deducted -${amt} USDT from your balance.`);
+        u.balance += val;
+        await u.save();
+        sendTelegramMessage(userId, `🎁 Admin added +${val} USDT to your balance.`);
+        return res.json({ success: true, message: `Added ${val} USDT to${userId}` });
+    } else if (action === 'cut') {
+        u.balance = Math.max(0, u.balance - val);
+        await u.save();
+        sendTelegramMessage(userId, `⚠️ Admin deducted -${val} USDT from your balance.`);
+        return res.json({ success: true, message: `Deducted ${val} USDT from${userId}` });
     }
-    await u.save();
-    res.json({ success: true, message: `Successfully ${action}ed ${amt} USDT for user${userId}!` });
+
+    res.status(400).json({ success: false, message: "Invalid action" });
 });
 
-app.post('/admin/broadcast', async (req, res) => {
-    const { message, adminKey } = req.body;
-    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
-    const users = await User.find({});
-    let count = 0;
-    for (let u of users) {
-        await sendTelegramMessage(u.id, message);
-        count++;
+app.get('/api/user/:id', async (req, res) => {
+    try {
+        let user = await User.findOne({ id: req.params.id });
+        if (!user) {
+            user = new User({ id: req.params.id, username: 'User' });
+            await user.save();
+        }
+        res.json(user);
+    } catch (e) {
+        res.status(500).json({ error: "Server error" });
     }
-    res.json({ success: true, message: `Broadcast sent to ${count} users successfully!` });
-});
-
-app.get('/api/user/:userId', async (req, res) => {
-    const userId = req.params.userId;
-    let user = await User.findOne({ id: userId });
-    if (!user) {
-        user = new User({ id: userId, username: 'User' });
-        await user.save();
-    }
-    res.json(user);
 });
 
 app.post('/api/claim', async (req, res) => {
-    const { userId } = req.body;
-    const u = await User.findOne({ id: userId });
-    if (!u) return res.status(400).json({ success: false, message: "User not found" });
+    try {
+        const { userId } = req.body;
+        let user = await User.findOne({ id: userId });
+        if (!user) return res.json({ success: false });
 
-    let dailyProfit = u.ghs > 0 ? u.ghs * 0.3 : 0.01;
-    let perSecondRate = dailyProfit / 86400;
-    let elapsedSeconds = (Date.now() - u.lastClaimTime) / 1000;
-    let MinedAmount = Math.max(0, elapsedSeconds * perSecondRate);
-
-    u.balance += MinedAmount;
-    u.lastClaimTime = Date.now();
-    await u.save();
-
-    res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
+        let dailyProfit = user.ghs > 0 ? user.ghs * 0.3 : 0.01;
+        let perSecondRate = dailyProfit / 86400;
+        let elapsedSeconds = (Date.now() - user.lastClaimTime) / 1000;
+        let earned = elapsedSeconds * perSecondRate;
+        user.balance += earned;
+        user.lastClaimTime = Date.now();
+        await user.save();
+        res.json({ success: true, balance: user.balance, lastClaimTime: user.lastClaimTime });
+    } catch (e) {
+        res.status(500).json({ success: false });
+    }
 });
 
 app.post('/api/deposit', async (req, res) => {
-    const { userId, username, amount, txHash } = req.body;
-    let amt = parseFloat(amount);
-    if (!userId || !amt || amt < 1 || amt > 1000) {
-        return res.status(400).json({ success: false, message: "Invalid amount. Min 1$ & Max 1000$" });
-    }
+    try {
+        const { userId, username, amount, txHash } = req.body;
+        let user = await User.findOne({ id: userId });
+        if (!user) return res.json({ success: false });
 
-    let u = await User.findOne({ id: userId });
-    if (!u) u = new User({ id: userId, username: username || 'User' });
+        let reqId = 'dep_' + Date.now();
+        let depObj = { id: reqId, amount: parseFloat(amount), txHash: txHash, status: 'PENDING', date: new Date().toLocaleDateString() };
+        user.deposits.push(depObj);
+        user.markModified('deposits');
+        await user.save();
 
-    const reqId = 'dep_' + Date.now();
-    u.deposits.unshift({ id: reqId, amount: amt, txHash, status: 'PENDING', date: new Date().toLocaleDateString() });
-    await u.save();
+        let newReq = new PendingRequest({ reqId: reqId, type: 'deposit', userId: userId, amount: parseFloat(amount), txHash: txHash });
+        await newReq.save();
 
-    await PendingRequest.create({ reqId, type: 'deposit', userId, amount: amt, txHash });
-
-    if (ADMIN_ID) {
-        const msgText = `📥 **New Deposit Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amt} USDT**\n🔑 TxHash: \`${txHash}\``;
-        const inlineKeyboard = {
+        sendTelegramMessage(ADMIN_ID, `📥 *New Deposit Request*\n\nUser: @${username} (\`${userId}\`)\nAmount: \`${amount} USDT\`\nTxHash: \`${txHash}\``, {
             inline_keyboard: [[
                 { text: "✅ Approve", callback_data: `approve_${reqId}` },
                 { text: "❌ Reject", callback_data: `reject_${reqId}` }
             ]]
-        };
-        await sendTelegramMessage(ADMIN_ID, msgText, inlineKeyboard);
+        });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false });
     }
-
-    res.json({ success: true, message: "Deposit request submitted successfully" });
 });
 
 app.post('/api/withdraw', async (req, res) => {
-    const { userId, username, amount, address } = req.body;
-    if (!userId || !amount || !address) return res.status(400).json({ success: false, message: "Missing data" });
+    try {
+        const { userId, username, amount, address } = req.body;
+        let user = await User.findOne({ id: userId });
+        if (!user) return res.json({ success: false, message: "User not found" });
 
-    let u = await User.findOne({ id: userId });
-    if (!u || u.balance < parseFloat(amount)) {
-        return res.status(400).json({ success: false, message: "Insufficient balance" });
-    }
+        if (user.balance < parseFloat(amount)) {
+            return res.json({ success: false, message: "Insufficient balance!" });
+        }
 
-    const reqId = 'wd_' + Date.now();
-    u.withdrawals.unshift({ id: reqId, amount, address, status: 'PENDING', date: new Date().toLocaleDateString() });
-    await u.save();
+        let reqId = 'wth_' + Date.now();
+        let wthObj = { id: reqId, amount: parseFloat(amount), address: address, status: 'PENDING', date: new Date().toLocaleDateString() };
+        user.withdrawals.push(wthObj);
+        user.markModified('withdrawals');
+        await user.save();
 
-    await PendingRequest.create({ reqId, type: 'withdraw', userId, amount, address });
+        let newReq = new PendingRequest({ reqId: reqId, type: 'withdraw', userId: userId, amount: parseFloat(amount), address: address });
+        await newReq.save();
 
-    if (ADMIN_ID) {
-        const msgText = `📤 **New Withdraw Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amount} USDT**\n🏦 Address: \`${address}\``;
-        const inlineKeyboard = {
+        sendTelegramMessage(ADMIN_ID, `📤 *New Withdrawal Request*\n\nUser: @${username} (\`${userId}\`)\nAmount: \`${amount} USDT\`\nAddress: \`${address}\``, {
             inline_keyboard: [[
                 { text: "✅ Approve", callback_data: `approve_${reqId}` },
                 { text: "❌ Reject", callback_data: `reject_${reqId}` }
             ]]
-        };
-        await sendTelegramMessage(ADMIN_ID, msgText, inlineKeyboard);
+        });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false });
     }
-
-    res.json({ success: true, message: "Withdrawal request submitted successfully" });
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${PORT}`);
     const RENDER_URL = process.env.RENDER_EXTERNAL_URL || "https://bitharvest-qtyp.onrender.com";
     try {
         await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/api/webhook/${BOT_TOKEN}`);
-        console.log("Telegram Webhook Set Successfully!");
-    } catch (e) {
-        console.log("Failed to set webhook:", e);
+        console.log("Telegram Webhook Automatically Set!");
+    } catch (err) {
+        console.log("Webhook setup failed:", err);
     }
 });
