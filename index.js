@@ -93,7 +93,7 @@ async function answerCallbackQuery(callbackQueryId, text) {
     }
 }
 
-// 🟢 Zaroori Route Jo Missing Tha: Get User Data API
+// 1. Get User Data API
 app.get('/api/user/:id', async (req, res) => {
     try {
         let user = await User.findOne({ id: req.params.id });
@@ -107,7 +107,7 @@ app.get('/api/user/:id', async (req, res) => {
     }
 });
 
-// Claim Mining Balance API
+// 2. Claim Mining Balance API
 app.post('/api/claim', async (req, res) => {
     try {
         const { userId } = req.body;
@@ -129,7 +129,7 @@ app.post('/api/claim', async (req, res) => {
     }
 });
 
-// Deposit Request API
+// 3. Deposit Request API
 app.post('/api/deposit', async (req, res) => {
     try {
         const { userId, username, amount, txHash } = req.body;
@@ -173,7 +173,7 @@ app.post('/api/deposit', async (req, res) => {
     }
 });
 
-// Withdraw Request API
+// 4. Withdraw Request API
 app.post('/api/withdraw', async (req, res) => {
     try {
         const { userId, username, amount, address } = req.body;
@@ -221,7 +221,7 @@ app.post('/api/withdraw', async (req, res) => {
     }
 });
 
-// Telegram Bot Webhook (`/start` and 3-level referral tracking)
+// Webhook handling `/start` and 3-level referral tracking
 app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     const update = req.body;
     res.sendStatus(200);
@@ -238,6 +238,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
 
                 let user = await User.findOne({ id: chatId });
 
+                // Agar naya user hai toh
                 if (!user) {
                     user = new User({
                         id: chatId,
@@ -246,27 +247,33 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     });
 
                     if (referrerId && referrerId !== chatId) {
+                        // Level 1 Referral
                         const refL1 = await User.findOne({ id: referrerId });
                         if (refL1) {
                             if (!refL1.referrals.level1.includes(chatId)) {
                                 refL1.referrals.level1.push(chatId);
+                                refL1.markModified('referrals'); // 🔥 Fix: Save Array Change
                                 await refL1.save();
                                 sendTelegramMessage(referrerId, `🎉 *New Level 1 Referral Joined!*\nUser ID: \`${chatId}\``);
                             }
 
+                            // Level 2 Referral
                             if (refL1.referredBy) {
                                 const refL2 = await User.findOne({ id: refL1.referredBy });
                                 if (refL2) {
                                     if (!refL2.referrals.level2.includes(chatId)) {
                                         refL2.referrals.level2.push(chatId);
+                                        refL2.markModified('referrals'); // 🔥 Fix
                                         await refL2.save();
                                     }
 
+                                    // Level 3 Referral
                                     if (refL2.referredBy) {
                                         const refL3 = await User.findOne({ id: refL2.referredBy });
                                         if (refL3) {
                                             if (!refL3.referrals.level3.includes(chatId)) {
                                                 refL3.referrals.level3.push(chatId);
+                                                refL3.markModified('referrals'); // 🔥 Fix
                                                 await refL3.save();
                                             }
                                         }
@@ -318,13 +325,14 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         u.markModified('deposits');
                         await u.save();
 
-                        // 3-Level Commission Distribution (15%, 2%, 1%)
+                        // 3-Level Commission (15%, 2%, 1%)
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
                                 let commL1 = depAmount * 0.15;
                                 refL1.balance += commL1;
                                 refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
+                                refL1.markModified('refEarnings');
                                 await refL1.save();
                                 sendTelegramMessage(refL1.id, `🎁 Received +${commL1.toFixed(4)} USDT (15% Level 1 Referral Commission)!`);
 
@@ -334,6 +342,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                                         let commL2 = depAmount * 0.02;
                                         refL2.balance += commL2;
                                         refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
+                                        refL2.markModified('refEarnings');
                                         await refL2.save();
                                         sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
 
@@ -343,6 +352,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                                                 let commL3 = depAmount * 0.01;
                                                 refL3.balance += commL3;
                                                 refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
+                                                refL3.markModified('refEarnings');
                                                 await refL3.save();
                                                 sendTelegramMessage(refL3.id, `🎁 Received +${commL3.toFixed(4)} USDT (1% Level 3 Referral Commission)!`);
                                             }
@@ -600,6 +610,7 @@ app.post('/admin/action', async (req, res) => {
                     let commL1 = depAmount * 0.15;
                     refL1.balance += commL1;
                     refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
+                    refL1.markModified('refEarnings');
                     await refL1.save();
                     sendTelegramMessage(refL1.id, `🎁 Received +${commL1.toFixed(4)} USDT (15% Level 1 Referral Commission)!`);
 
@@ -609,6 +620,7 @@ app.post('/admin/action', async (req, res) => {
                             let commL2 = depAmount * 0.02;
                             refL2.balance += commL2;
                             refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
+                            refL2.markModified('refEarnings');
                             await refL2.save();
                             sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
 
@@ -618,6 +630,7 @@ app.post('/admin/action', async (req, res) => {
                                     let commL3 = depAmount * 0.01;
                                     refL3.balance += commL3;
                                     refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
+                                    refL3.markModified('refEarnings');
                                     await refL3.save();
                                     sendTelegramMessage(refL3.id, `🎁 Received +${commL3.toFixed(4)} USDT (1% Level 3 Referral Commission)!`);
                                 }
@@ -671,7 +684,7 @@ app.post('/admin/action', async (req, res) => {
 });
 
 app.post('/admin/manage-balance', async (req, res) => {
-    The { userId, amount, action, adminKey } = req.body;
+    const { userId, amount, action, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
 
     const u = await User.findOne({ id: userId });
