@@ -371,6 +371,16 @@ app.get('/admin/dashboard', async (req, res) => {
                 <div class="stat-card"><div class="stat-title">Paid Out</div><div class="stat-value">${totalPaidOut.toFixed(2)} USDT</div></div>
                 <div class="stat-card"><div class="stat-title">Pending Requests</div><div class="stat-value">${requests.length}</div></div>
             </div>
+
+            <!-- Broadcast Section Added -->
+            <div class="card">
+                <h3>📢 Send Broadcast Message to All Users</h3>
+                <textarea id="broadcast-msg" rows="3" placeholder="Type your broadcast message here..."></textarea>
+                <div style="margin-top:10px;">
+                    <button class="btn" onclick="sendBroadcast()">📢 Send Broadcast</button>
+                </div>
+            </div>
+
             <div class="card">
                 <h3>🔍 Search User Details & Manage Balance</h3>
                 <form method="GET" action="/admin/dashboard" class="search-box">
@@ -418,6 +428,22 @@ app.get('/admin/dashboard', async (req, res) => {
                 `}
             </div>
             <script>
+                async function sendBroadcast() {
+                    let message = document.getElementById('broadcast-msg').value.trim();
+                    if (!message) return alert("Please enter a message!");
+                    
+                    if (!confirm("Are you sure you want to send this broadcast to all users?")) return;
+
+                    let res = await fetch('/admin/broadcast', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ message, adminKey: '${ADMIN_ID}' })
+                    });
+                    let data = await res.json();
+                    alert(data.message);
+                    document.getElementById('broadcast-msg').value = '';
+                }
+
                 async function handleReq(reqId, action) {
                     let res = await fetch('/admin/action', {
                         method: 'POST',
@@ -445,6 +471,33 @@ app.get('/admin/dashboard', async (req, res) => {
         </html>
     `;
     res.send(html);
+});
+
+app.post('/admin/broadcast', async (req, res) => {
+    const { message, adminKey } = req.body;
+    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
+
+    if (!message || message.trim() === '') {
+        return res.status(400).json({ success: false, message: "Message text is required" });
+    }
+
+    try {
+        const allUsers = await User.find({});
+        let successCount = 0;
+
+        for (let user of allUsers) {
+            try {
+                await sendTelegramMessage(user.id, `📢 **Announcement**\n\n${message}`);
+                successCount++;
+            } catch (e) {
+                console.log(`Failed to send broadcast to ${user.id}`, e);
+            }
+        }
+
+        res.json({ success: true, message: `Broadcast sent successfully to ${successCount} out of${allUsers.length} users!` });
+    } catch (err) {
+        res.status(500).json({ success: false, message: "Error sending broadcast" });
+    }
 });
 
 app.post('/admin/action', async (req, res) => {
