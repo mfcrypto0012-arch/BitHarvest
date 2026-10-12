@@ -183,13 +183,8 @@ app.post('/webhook', async (req, res) => {
                         const depAmount = parseFloat(reqDoc.amount);
                         u.ghs += depAmount;
 
-                        let idx = u.deposits.findIndex(d => d.id === reqId || d.id === reqDoc.reqId);
-                        if (idx !== -1) {
-                            u.deposits[idx].status = 'PAID';
-                        } else {
-                            let p = u.deposits.find(d => d.status === 'PENDING');
-                            if (p) p.status = 'PAID';
-                        }
+                        let dep = u.deposits.find(d => d.id === reqId);
+                        if (dep) dep.status = 'PAID';
                         u.markModified('deposits');
                         await u.save();
 
@@ -233,13 +228,8 @@ app.post('/webhook', async (req, res) => {
                     } else if (reqDoc.type === 'withdraw' && u) {
                         u.balance -= parseFloat(reqDoc.amount);
 
-                        let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
-                        if (idx !== -1) {
-                            u.withdrawals[idx].status = 'PAID';
-                        } else {
-                            let p = u.withdrawals.find(w => w.status === 'PENDING' || w.status === 'PEND1NG');
-                            if (p) p.status = 'PAID';
-                        }
+                        let wth = u.withdrawals.find(w => w.id === reqId);
+                        if (wth) wth.status = 'PAID';
                         u.markModified('withdrawals');
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `✅ Your withdrawal of ${reqDoc.amount} USDT has been approved!`);
@@ -248,24 +238,14 @@ app.post('/webhook', async (req, res) => {
                     editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${reqDoc.userId}\nAmount:${reqDoc.amount} USDT`);
                 } else {
                     if (reqDoc.type === 'deposit' && u) {
-                        let idx = u.deposits.findIndex(d => d.id === reqId || d.id === reqDoc.reqId);
-                        if (idx !== -1) {
-                            u.deposits[idx].status = 'DECLINED';
-                        } else {
-                            let p = u.deposits.find(d => d.status === 'PENDING');
-                            if (p) p.status = 'DECLINED';
-                        }
+                        let dep = u.deposits.find(d => d.id === reqId);
+                        if (dep) dep.status = 'DECLINED';
                         u.markModified('deposits');
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
                     } else if (reqDoc.type === 'withdraw' && u) {
-                        let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
-                        if (idx !== -1) {
-                            u.withdrawals[idx].status = 'DECLINED';
-                        } else {
-                            let p = u.withdrawals.find(w => w.status === 'PENDING' || w.status === 'PEND1NG');
-                            if (p) p.status = 'DECLINED';
-                        }
+                        let wth = u.withdrawals.find(w => w.id === reqId);
+                        if (wth) wth.status = 'DECLINED';
                         u.markModified('withdrawals');
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined.`);
@@ -372,7 +352,6 @@ app.get('/admin/dashboard', async (req, res) => {
                 <div class="stat-card"><div class="stat-title">Pending Requests</div><div class="stat-value">${requests.length}</div></div>
             </div>
 
-            <!-- Broadcast Section Added -->
             <div class="card">
                 <h3>📢 Send Broadcast Message to All Users</h3>
                 <textarea id="broadcast-msg" rows="3" placeholder="Type your broadcast message here..."></textarea>
@@ -514,13 +493,8 @@ app.post('/admin/action', async (req, res) => {
             const depAmount = parseFloat(reqDoc.amount);
             u.ghs += depAmount;
 
-            let idx = u.deposits.findIndex(d => d.id === reqId || d.id === reqDoc.reqId);
-            if (idx !== -1) {
-                u.deposits[idx].status = 'PAID';
-            } else {
-                let p = u.deposits.find(d => d.status === 'PENDING');
-                if (p) p.status = 'PAID';
-            }
+            let dep = u.deposits.find(d => d.id === reqId);
+            if (dep) dep.status = 'PAID';
             u.markModified('deposits');
             await u.save();
 
@@ -564,37 +538,22 @@ app.post('/admin/action', async (req, res) => {
         } else if (reqDoc.type === 'withdraw' && u) {
             u.balance -= parseFloat(reqDoc.amount);
 
-            let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
-            if (idx !== -1) {
-                u.withdrawals[idx].status = 'PAID';
-            } else {
-                let p = u.withdrawals.find(w => w.status === 'PENDING' || w.status === 'PEND1NG');
-                if (p) p.status = 'PAID';
-            }
+            let wth = u.withdrawals.find(w => w.id === reqId);
+            if (wth) wth.status = 'PAID';
             u.markModified('withdrawals');
             await u.save();
             sendTelegramMessage(reqDoc.userId, `✅ Your withdrawal of ${reqDoc.amount} USDT has been approved!`);
         }
     } else {
         if (reqDoc.type === 'deposit' && u) {
-            let idx = u.deposits.findIndex(d => d.id === reqId || d.id === reqDoc.reqId);
-            if (idx !== -1) {
-                u.deposits[idx].status = 'DECLINED';
-            } else {
-                let p = u.deposits.find(d => d.status === 'PENDING');
-                if (p) p.status = 'DECLINED';
-            }
+            let dep = u.deposits.find(d => d.id === reqId);
+            if (dep) dep.status = 'DECLINED';
             u.markModified('deposits');
             await u.save();
             sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
         } else if (reqDoc.type === 'withdraw' && u) {
-            let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
-            if (idx !== -1) {
-                u.withdrawals[idx].status = 'DECLINED';
-            } else {
-                let p = u.withdrawals.find(w => w.status === 'PENDING' || w.status === 'PEND1NG');
-                if (p) p.status = 'DECLINED';
-            }
+            let wth = u.withdrawals.find(w => w.id === reqId);
+            if (wth) wth.status = 'DECLINED';
             u.markModified('withdrawals');
             await u.save();
             sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined.`);
@@ -674,7 +633,7 @@ app.post('/api/deposit', async (req, res) => {
         user.markModified('deposits');
         await user.save();
 
-        let newReq = new PendingRequest({ reqId: reqId, type: 'deposit', userId: userId, amount: parseFloat(amount), txHash: txHash });
+        let newReq = new PendingRequest({ reqId: reqId, type: 'deposit', userId: userId, amount: parseFloat(amount), txHash: txHash, status: 'PENDING' });
         await newReq.save();
 
         sendTelegramMessage(ADMIN_ID, `📥 *New Deposit Request*\n\nUser: @${username} (\`${userId}\`)\nAmount: \`${amount} USDT\`\nTxHash: \`${txHash}\``, {
@@ -705,7 +664,7 @@ app.post('/api/withdraw', async (req, res) => {
         user.markModified('withdrawals');
         await user.save();
 
-        let newReq = new PendingRequest({ reqId: reqId, type: 'withdraw', userId: userId, amount: parseFloat(amount), address: address });
+        let newReq = new PendingRequest({ reqId: reqId, type: 'withdraw', userId: userId, amount: parseFloat(amount), address: address, status: 'PENDING' });
         await newReq.save();
 
         sendTelegramMessage(ADMIN_ID, `📤 *New Withdrawal Request*\n\nUser: @${username} (\`${userId}\`)\nAmount: \`${amount} USDT\`\nAddress: \`${address}\``, {
