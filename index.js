@@ -93,7 +93,6 @@ async function answerCallbackQuery(callbackQueryId, text) {
     }
 }
 
-// 1. Get User Data API
 app.get('/api/user/:id', async (req, res) => {
     try {
         let user = await User.findOne({ id: req.params.id });
@@ -107,7 +106,6 @@ app.get('/api/user/:id', async (req, res) => {
     }
 });
 
-// 2. Claim Mining Balance API
 app.post('/api/claim', async (req, res) => {
     try {
         const { userId } = req.body;
@@ -129,7 +127,6 @@ app.post('/api/claim', async (req, res) => {
     }
 });
 
-// 3. Deposit Request API
 app.post('/api/deposit', async (req, res) => {
     try {
         const { userId, username, amount, txHash } = req.body;
@@ -173,7 +170,6 @@ app.post('/api/deposit', async (req, res) => {
     }
 });
 
-// 4. Withdraw Request API
 app.post('/api/withdraw', async (req, res) => {
     try {
         const { userId, username, amount, address } = req.body;
@@ -221,7 +217,6 @@ app.post('/api/withdraw', async (req, res) => {
     }
 });
 
-// Webhook handling `/start` and 3-level referral tracking
 app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     const update = req.body;
     res.sendStatus(200);
@@ -408,7 +403,6 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     }
 });
 
-// Admin Dashboard Route
 app.get('/admin/dashboard', async (req, res) => {
     const adminKey = req.query.key;
     if (adminKey !== ADMIN_ID) {
