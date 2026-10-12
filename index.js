@@ -238,7 +238,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
 
                 let user = await User.findOne({ id: chatId });
 
-                // Agar naya user hai toh
+                // Agar naya user hai tabhi referral add hoga
                 if (!user) {
                     user = new User({
                         id: chatId,
@@ -247,33 +247,33 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     });
 
                     if (referrerId && referrerId !== chatId) {
-                        // Level 1 Referral
+                        // Level 1 Referral Tracking
                         const refL1 = await User.findOne({ id: referrerId });
                         if (refL1) {
                             if (!refL1.referrals.level1.includes(chatId)) {
                                 refL1.referrals.level1.push(chatId);
-                                refL1.markModified('referrals'); // 🔥 Fix: Save Array Change
+                                refL1.markModified('referrals');
                                 await refL1.save();
                                 sendTelegramMessage(referrerId, `🎉 *New Level 1 Referral Joined!*\nUser ID: \`${chatId}\``);
                             }
 
-                            // Level 2 Referral
+                            // Level 2 Referral Tracking
                             if (refL1.referredBy) {
                                 const refL2 = await User.findOne({ id: refL1.referredBy });
                                 if (refL2) {
                                     if (!refL2.referrals.level2.includes(chatId)) {
                                         refL2.referrals.level2.push(chatId);
-                                        refL2.markModified('referrals'); // 🔥 Fix
+                                        refL2.markModified('referrals');
                                         await refL2.save();
                                     }
 
-                                    // Level 3 Referral
+                                    // Level 3 Referral Tracking
                                     if (refL2.referredBy) {
                                         const refL3 = await User.findOne({ id: refL2.referredBy });
                                         if (refL3) {
                                             if (!refL3.referrals.level3.includes(chatId)) {
                                                 refL3.referrals.level3.push(chatId);
-                                                refL3.markModified('referrals'); // 🔥 Fix
+                                                refL3.markModified('referrals');
                                                 await refL3.save();
                                             }
                                         }
@@ -325,7 +325,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         u.markModified('deposits');
                         await u.save();
 
-                        // 3-Level Commission (15%, 2%, 1%)
+                        // Commission Distribution
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
@@ -365,7 +365,6 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
                     } else if (reqDoc.type === 'withdraw' && u) {
                         u.balance -= parseFloat(reqDoc.amount);
-                        
                         let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
                         if (idx !== -1) {
                             u.withdrawals[idx].status = 'PAID';
@@ -389,7 +388,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         }
                         u.markModified('deposits');
                         await u.save();
-                        sendTelegramMessage(reqDoc.userId, `❌ Your deposit was rejected.`);
+                        sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
                     } else if (reqDoc.type === 'withdraw' && u) {
                         let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
                         if (idx !== -1) {
@@ -400,7 +399,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         }
                         u.markModified('withdrawals');
                         await u.save();
-                        sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal was rejected.`);
+                        sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined.`);
                     }
                     editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${reqDoc.userId}\nAmount: ${reqDoc.amount} USDT`);
                 }
