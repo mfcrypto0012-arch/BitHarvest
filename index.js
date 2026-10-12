@@ -104,8 +104,12 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
             const text = msg.text || '';
 
             if (text.startsWith('/start')) {
-                const parts = text.split(' ');
-                const referrerId = parts[1] ? String(parts[1]).trim() : null;
+                // Parameter Extraction
+                let referrerId = null;
+                const match = text.match(/\/start\s+(\d+)/);
+                if (match && match[1]) {
+                    referrerId = String(match[1]).trim();
+                }
 
                 let user = await User.findOne({ id: chatId });
                 let isNewUser = false;
@@ -124,36 +128,34 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     isNewUser = true;
                 }
 
-                if (referrerId && referrerId !== chatId && isNewUser) {
-                    const refL1 = await User.findOne({ id: referrerId });
-                    if (refL1) {
-                        if (!refL1.referrals.level1.includes(chatId)) {
-                            refL1.referrals.level1.push(chatId);
-                            refL1.markModified('referrals');
-                            await refL1.save();
-                            sendTelegramMessage(referrerId, `🎉 *New Level 1 Referral Joined!*\nUser ID: \`${chatId}\``);
-                        }
+                // Instant Referral Registering Logic
+                if (isNewUser && user.referredBy) {
+                    const l1Id = user.referredBy;
+                    
+                    // Level 1 Instant Count Add
+                    await User.updateOne(
+                        { id: l1Id },
+                        { $addToSet: { "referrals.level1": chatId } }
+                    );
+                    sendTelegramMessage(l1Id, `🎉 *New Level 1 Referral Joined!*\nUser ID: \`${chatId}\``);
 
-                        if (refL1.referredBy) {
-                            const refL2 = await User.findOne({ id: refL1.referredBy });
-                            if (refL2) {
-                                if (!refL2.referrals.level2.includes(chatId)) {
-                                    refL2.referrals.level2.push(chatId);
-                                    refL2.markModified('referrals');
-                                    await refL2.save();
-                                }
+                    // Level 2 Instant Count Add
+                    const refL1 = await User.findOne({ id: l1Id });
+                    if (refL1 && refL1.referredBy) {
+                        const l2Id = refL1.referredBy;
+                        await User.updateOne(
+                            { id: l2Id },
+                            { $addToSet: { "referrals.level2": chatId } }
+                        );
 
-                                if (refL2.referredBy) {
-                                    const refL3 = await User.findOne({ id: refL2.referredBy });
-                                    if (refL3) {
-                                        if (!refL3.referrals.level3.includes(chatId)) {
-                                            refL3.referrals.level3.push(chatId);
-                                            refL3.markModified('referrals');
-                                            await refL3.save();
-                                        }
-                                    }
-                                }
-                            }
+                        // Level 3 Instant Count Add
+                        const refL2 = await User.findOne({ id: l2Id });
+                        if (refL2 && refL2.referredBy) {
+                            const l3Id = refL2.referredBy;
+                            await User.updateOne(
+                                { id: l3Id },
+                                { $addToSet: { "referrals.level3": chatId } }
+                            );
                         }
                     }
                 }
@@ -196,6 +198,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         u.markModified('deposits');
                         await u.save();
 
+                        // Commission Calculation on Approved Deposit
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
