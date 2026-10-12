@@ -108,47 +108,54 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                 const referrerId = parts[1] ? String(parts[1]).trim() : null;
 
                 let user = await User.findOne({ id: chatId });
+                let isNewUser = false;
+
                 if (!user) {
+                    isNewUser = true;
                     user = new User({
                         id: chatId,
                         username: msg.from.username || msg.from.first_name || 'User',
                         referredBy: (referrerId && referrerId !== chatId) ? referrerId : null
                     });
+                    await user.save();
+                } else if (!user.referredBy && referrerId && referrerId !== chatId) {
+                    user.referredBy = referrerId;
+                    await user.save();
+                    isNewUser = true;
+                }
 
-                    if (referrerId && referrerId !== chatId) {
-                        const refL1 = await User.findOne({ id: referrerId });
-                        if (refL1) {
-                            if (!refL1.referrals.level1.includes(chatId)) {
-                                refL1.referrals.level1.push(chatId);
-                                refL1.markModified('referrals');
-                                await refL1.save();
-                                sendTelegramMessage(referrerId, `🎉 *New Level 1 Referral Joined!*\nUser ID: \`${chatId}\``);
-                            }
+                if (referrerId && referrerId !== chatId && isNewUser) {
+                    const refL1 = await User.findOne({ id: referrerId });
+                    if (refL1) {
+                        if (!refL1.referrals.level1.includes(chatId)) {
+                            refL1.referrals.level1.push(chatId);
+                            refL1.markModified('referrals');
+                            await refL1.save();
+                            sendTelegramMessage(referrerId, `🎉 *New Level 1 Referral Joined!*\nUser ID: \`${chatId}\``);
+                        }
 
-                            if (refL1.referredBy) {
-                                const refL2 = await User.findOne({ id: refL1.referredBy });
-                                if (refL2) {
-                                    if (!refL2.referrals.level2.includes(chatId)) {
-                                        refL2.referrals.level2.push(chatId);
-                                        refL2.markModified('referrals');
-                                        await refL2.save();
-                                    }
+                        if (refL1.referredBy) {
+                            const refL2 = await User.findOne({ id: refL1.referredBy });
+                            if (refL2) {
+                                if (!refL2.referrals.level2.includes(chatId)) {
+                                    refL2.referrals.level2.push(chatId);
+                                    refL2.markModified('referrals');
+                                    await refL2.save();
+                                }
 
-                                    if (refL2.referredBy) {
-                                        const refL3 = await User.findOne({ id: refL2.referredBy });
-                                        if (refL3) {
-                                            if (!refL3.referrals.level3.includes(chatId)) {
-                                                refL3.referrals.level3.push(chatId);
-                                                refL3.markModified('referrals');
-                                                await refL3.save();
-                                            }
+                                if (refL2.referredBy) {
+                                    const refL3 = await User.findOne({ id: refL2.referredBy });
+                                    if (refL3) {
+                                        if (!refL3.referrals.level3.includes(chatId)) {
+                                            refL3.referrals.level3.push(chatId);
+                                            refL3.markModified('referrals');
+                                            await refL3.save();
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                    await user.save();
                 }
 
                 await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
