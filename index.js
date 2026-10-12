@@ -238,7 +238,6 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
 
                 let user = await User.findOne({ id: chatId });
 
-                // Agar naya user hai tabhi referral add hoga
                 if (!user) {
                     user = new User({
                         id: chatId,
@@ -247,7 +246,6 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     });
 
                     if (referrerId && referrerId !== chatId) {
-                        // Level 1 Referral Tracking
                         const refL1 = await User.findOne({ id: referrerId });
                         if (refL1) {
                             if (!refL1.referrals.level1.includes(chatId)) {
@@ -257,7 +255,6 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                                 sendTelegramMessage(referrerId, `🎉 *New Level 1 Referral Joined!*\nUser ID: \`${chatId}\``);
                             }
 
-                            // Level 2 Referral Tracking
                             if (refL1.referredBy) {
                                 const refL2 = await User.findOne({ id: refL1.referredBy });
                                 if (refL2) {
@@ -267,7 +264,6 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                                         await refL2.save();
                                     }
 
-                                    // Level 3 Referral Tracking
                                     if (refL2.referredBy) {
                                         const refL3 = await User.findOne({ id: refL2.referredBy });
                                         if (refL3) {
@@ -325,7 +321,6 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         u.markModified('deposits');
                         await u.save();
 
-                        // Commission Distribution
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
@@ -602,7 +597,6 @@ app.post('/admin/action', async (req, res) => {
             u.markModified('deposits');
             await u.save();
 
-            // Commission Distribution
             if (u.referredBy) {
                 let refL1 = await User.findOne({ id: u.referredBy });
                 if (refL1) {
