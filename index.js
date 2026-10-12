@@ -93,7 +93,6 @@ async function answerCallbackQuery(callbackQueryId, text) {
     }
 }
 
-// Simple Webhook Route without long token in URL
 app.post('/webhook', async (req, res) => {
     const update = req.body;
     res.sendStatus(200);
@@ -653,4 +652,29 @@ app.post('/api/withdraw', async (req, res) => {
         user.markModified('withdrawals');
         await user.save();
 
-        let newReq = new
+        let newReq = new PendingRequest({ reqId: reqId, type: 'withdraw', userId: userId, amount: parseFloat(amount), address: address });
+        await newReq.save();
+
+        sendTelegramMessage(ADMIN_ID, `📤 *New Withdrawal Request*\n\nUser: @${username} (\`${userId}\`)\nAmount: \`${amount} USDT\`\nAddress: \`${address}\``, {
+            inline_keyboard: [[
+                { text: "✅ Approve", callback_data: `approve_${reqId}` },
+                { text: "❌ Reject", callback_data: `reject_${reqId}` }
+            ]]
+        });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ success: false });
+    }
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, async () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    const RENDER_URL = process.env.RENDER_EXTERNAL_URL || "https://bitharvest-qtyp.onrender.com";
+    try {
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/webhook`);
+        console.log("Telegram Webhook Automatically Set!");
+    } catch (err) {
+        console.log("Webhook setup failed:", err);
+    }
+});
