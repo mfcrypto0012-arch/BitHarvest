@@ -93,7 +93,8 @@ async function answerCallbackQuery(callbackQueryId, text) {
     }
 }
 
-app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
+// Universal Webhook Handler
+async function handleWebhookLogic(req, res) {
     const update = req.body;
     res.sendStatus(200);
 
@@ -104,36 +105,60 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
             const text = msg.text || '';
 
             if (text.startsWith('/start')) {
-                const parts = text.split(' ');
-                const referrerId = parts[1] ? String(parts[1]) : null;
+                let referrerId = null;
+                const match = text.match(/\/start\s+(\d+)/);
+                if (match && match[1]) {
+                    referrerId = String(match[1]).trim();
+                }
 
                 let user = await User.findOne({ id: chatId });
+                let isNewUser = false;
+
                 if (!user) {
+                    isNewUser = true;
                     user = new User({
                         id: chatId,
                         username: msg.from.username || msg.from.first_name || 'User',
-                        referredBy: referrerId || null
+                        referredBy: (referrerId && referrerId !== chatId) ? referrerId : null
                     });
+                    await user.save();
+                } else if (!user.referredBy && referrerId && referrerId !== chatId) {
+                    user.referredBy = referrerId;
+                    await user.save();
+                    isNewUser = true;
+                }
 
-                    if (referrerId && referrerId !== chatId) {
-                        const referrer = await User.findOne({ id: referrerId });
-                        if (referrer) {
-                            user.referredBy = referrerId;
-                            if (!referrer.referrals.level1.includes(chatId)) {
-                                referrer.referrals.level1.push(chatId);
-                                sendTelegramMessage(referrerId, `🎉 New Level 1 Referral Joined! ID: ${chatId}`);
-                            }
-                            await referrer.save();
+                if (isNewUser && user.referredBy) {
+                    const l1Id = user.referredBy;
+                    await User.updateOne(
+                        { id: l1Id },
+                        { $addToSet: { "referrals.level1": chatId } }
+                    );
+                    sendTelegramMessage(l1Id, `🎉 *New Level 1 Referral Joined!*\nUser ID: \`${chatId}\``);
+
+                    const refL1 = await User.findOne({ id: l1Id });
+                    if (refL1 && refL1.referredBy) {
+                        const l2Id = refL1.referredBy;
+                        await User.updateOne(
+                            { id: l2Id },
+                            { $addToSet: { "referrals.level2": chatId } }
+                        );
+
+                        const refL2 = await User.findOne({ id: l2Id });
+                        if (refL2 && refL2.referredBy) {
+                            const l3Id = refL2.referredBy;
+                            await User.updateOne(
+                                { id: l3Id },
+                                { $addToSet: { "referrals.level3": chatId } }
+                            );
                         }
                     }
-                    await user.save();
                 }
+
                 await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
             } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
                 await sendTelegramMessage(chatId, `👑 **BitHarvest Admin Access**\n\nClick below to open Admin Dashboard:`, {
-                    inline_keyboard: [[
-                        { text: "🌐 Open Admin Dashboard", url: `https://bitharvest-qtyp.onrender.com/admin/dashboard?key=${ADMIN_ID}` }
-                    ]]
+                    inline_keyboard: [[ { text: "🌐 Open Admin Dashboard", url: `https://bitharvest-qtyp.onrender.com/admin/dashboard?key=${ADMIN_ID}` } ]]
                 });
             }
         } else if (update.callback_query) {
@@ -157,20 +182,25 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     if (reqDoc.type === 'deposit' && u) {
                         const depAmount = parseFloat(reqDoc.amount);
                         u.ghs += depAmount;
-                        
-                        let idx = u.deposits.findIndex(d => d.id === reqId);
+
+                        let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
                         if (idx !== -1) {
                             u.deposits[idx].status = 'PAID';
+                        } else {
+                            let p = u.deposits.find(d => d.status === 'PENDING');
+                            if (p) p.status = 'PAID';
                         }
                         u.markModified('deposits');
                         await u.save();
 
+                        // Multi-level Referral Commission
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
                                 let commL1 = depAmount * 0.15;
                                 refL1.balance += commL1;
                                 refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
+                                refL1.markModified('refEarnings');
                                 await refL1.save();
                                 sendTelegramMessage(refL1.id, `🎁 Received +${commL1.toFixed(4)} USDT (15% Level 1 Referral Commission)!`);
 
@@ -180,6 +210,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                                         let commL2 = depAmount * 0.02;
                                         refL2.balance += commL2;
                                         refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
+                                        refL2.markModified('refEarnings');
                                         await refL2.save();
                                         sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
 
@@ -189,6 +220,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                                                 let commL3 = depAmount * 0.01;
                                                 refL3.balance += commL3;
                                                 refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
+                                                refL3.markModified('refEarnings');
                                                 await refL3.save();
                                                 sendTelegramMessage(refL3.id, `🎁 Received +${commL3.toFixed(4)} USDT (1% Level 3 Referral Commission)!`);
                                             }
@@ -200,35 +232,46 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
 
                         sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
                     } else if (reqDoc.type === 'withdraw' && u) {
-                        u.balance -= parseFloat(reqDoc.amount);
-                        
-                        let idx = u.withdrawals.findIndex(w => w.id === reqId);
+                        let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
                         if (idx !== -1) {
                             u.withdrawals[idx].status = 'PAID';
+                        } else {
+                            let p = u.withdrawals.find(w => w.status === 'PENDING' || w.status === 'PEND1NG');
+                            if (p) p.status = 'PAID';
                         }
                         u.markModified('withdrawals');
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `✅ Your withdrawal of ${reqDoc.amount} USDT has been approved!`);
                     }
+
                     editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${reqDoc.userId}\nAmount:${reqDoc.amount} USDT`);
                 } else {
                     if (reqDoc.type === 'deposit' && u) {
-                        let idx = u.deposits.findIndex(d => d.id === reqId);
+                        let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
                         if (idx !== -1) {
                             u.deposits[idx].status = 'DECLINED';
+                        } else {
+                            let p = u.deposits.find(d => d.status === 'PENDING');
+                            if (p) p.status = 'DECLINED';
                         }
                         u.markModified('deposits');
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
                     } else if (reqDoc.type === 'withdraw' && u) {
-                        let idx = u.withdrawals.findIndex(w => w.id === reqId);
+                        // Refunds balance on withdrawal decline
+                        u.balance += parseFloat(reqDoc.amount);
+                        let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
                         if (idx !== -1) {
                             u.withdrawals[idx].status = 'DECLINED';
+                        } else {
+                            let p = u.withdrawals.find(w => w.status === 'PENDING' || w.status === 'PEND1NG');
+                            if (p) p.status = 'DECLINED';
                         }
                         u.markModified('withdrawals');
                         await u.save();
-                        sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined.`);
+                        sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined and funds refunded.`);
                     }
+
                     editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${reqDoc.userId}\nAmount:${reqDoc.amount} USDT`);
                 }
 
@@ -239,7 +282,11 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
     } catch (err) {
         console.log("Webhook error:", err);
     }
-});
+}
+
+app.post(`/api/webhook/${BOT_TOKEN}`, handleWebhookLogic);
+app.post('/webhook', handleWebhookLogic);
+app.post('/api/webhook/*', handleWebhookLogic);
 
 app.get('/admin/dashboard', async (req, res) => {
     const adminKey = req.query.key;
@@ -435,9 +482,12 @@ app.post('/admin/action', async (req, res) => {
             const depAmount = parseFloat(reqDoc.amount);
             u.ghs += depAmount;
             
-            let idx = u.deposits.findIndex(d => d.id === reqId);
+            let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
             if (idx !== -1) {
                 u.deposits[idx].status = 'PAID';
+            } else {
+                let p = u.deposits.find(d => d.status === 'PENDING');
+                if (p) p.status = 'PAID';
             }
             u.markModified('deposits');
             await u.save();
@@ -448,6 +498,7 @@ app.post('/admin/action', async (req, res) => {
                     let commL1 = depAmount * 0.15;
                     refL1.balance += commL1;
                     refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
+                    refL1.markModified('refEarnings');
                     await refL1.save();
                     sendTelegramMessage(refL1.id, `🎁 Received +${commL1.toFixed(4)} USDT (15% Level 1 Referral Commission)!`);
 
@@ -457,6 +508,7 @@ app.post('/admin/action', async (req, res) => {
                             let commL2 = depAmount * 0.02;
                             refL2.balance += commL2;
                             refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
+                            refL2.markModified('refEarnings');
                             await refL2.save();
                             sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
 
@@ -466,6 +518,7 @@ app.post('/admin/action', async (req, res) => {
                                     let commL3 = depAmount * 0.01;
                                     refL3.balance += commL3;
                                     refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
+                                    refL3.markModified('refEarnings');
                                     await refL3.save();
                                     sendTelegramMessage(refL3.id, `🎁 Received +${commL3.toFixed(4)} USDT (1% Level 3 Referral Commission)!`);
                                 }
@@ -477,11 +530,12 @@ app.post('/admin/action', async (req, res) => {
 
             sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
         } else if (reqDoc.type === 'withdraw' && u) {
-            u.balance -= parseFloat(reqDoc.amount);
-            
-            let idx = u.withdrawals.findIndex(w => w.id === reqId);
+            let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
             if (idx !== -1) {
                 u.withdrawals[idx].status = 'PAID';
+            } else {
+                let p = u.withdrawals.find(w => w.status === 'PENDING' || w.status === 'PEND1NG');
+                if (p) p.status = 'PAID';
             }
             u.markModified('withdrawals');
             await u.save();
@@ -489,21 +543,28 @@ app.post('/admin/action', async (req, res) => {
         }
     } else {
         if (reqDoc.type === 'deposit' && u) {
-            let idx = u.deposits.findIndex(d => d.id === reqId);
+            let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
             if (idx !== -1) {
                 u.deposits[idx].status = 'DECLINED';
+            } else {
+                let p = u.deposits.find(d => d.status === 'PENDING');
+                if (p) p.status = 'DECLINED';
             }
             u.markModified('deposits');
             await u.save();
             sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
         } else if (reqDoc.type === 'withdraw' && u) {
-            let idx = u.withdrawals.findIndex(w => w.id === reqId);
+            u.balance += parseFloat(reqDoc.amount);
+            let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
             if (idx !== -1) {
                 u.withdrawals[idx].status = 'DECLINED';
+            } else {
+                let p = u.withdrawals.find(w => w.status === 'PENDING' || w.status === 'PEND1NG');
+                if (p) p.status = 'DECLINED';
             }
             u.markModified('withdrawals');
             await u.save();
-            sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined.`);
+            sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined and funds refunded.`);
         }
     }
 
@@ -582,6 +643,7 @@ app.post('/api/deposit', async (req, res) => {
 
     const reqId = 'dep_' + Date.now();
     u.deposits.unshift({ id: reqId, amount: amt, txHash, status: 'PENDING', date: new Date().toLocaleDateString() });
+    u.markModified('deposits');
     await u.save();
 
     await PendingRequest.create({ reqId, type: 'deposit', userId, amount: amt, txHash, status: 'PENDING' });
@@ -602,21 +664,26 @@ app.post('/api/deposit', async (req, res) => {
 
 app.post('/api/withdraw', async (req, res) => {
     const { userId, username, amount, address } = req.body;
-    if (!userId || !amount || !address) return res.status(400).json({ success: false, message: "Missing data" });
+    let amt = parseFloat(amount);
+    if (!userId || !amt || !address) return res.status(400).json({ success: false, message: "Missing data" });
 
     let u = await User.findOne({ id: userId });
-    if (!u || u.balance < parseFloat(amount)) {
+    if (!u || u.balance < amt) {
         return res.status(400).json({ success: false, message: "Insufficient balance" });
     }
 
+    // Deduct balance instantly upon request
+    u.balance -= amt;
+
     const reqId = 'wd_' + Date.now();
-    u.withdrawals.unshift({ id: reqId, amount, address, status: 'PENDING', date: new Date().toLocaleDateString() });
+    u.withdrawals.unshift({ id: reqId, amount: amt, address, status: 'PENDING', date: new Date().toLocaleDateString() });
+    u.markModified('withdrawals');
     await u.save();
 
-    await PendingRequest.create({ reqId, type: 'withdraw', userId, amount, address, status: 'PENDING' });
+    await PendingRequest.create({ reqId, type: 'withdraw', userId, amount: amt, address, status: 'PENDING' });
 
     if (ADMIN_ID) {
-        const msgText = `📤 **New Withdraw Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amount} USDT**\n🏦 Address: \`${address}\``;
+        const msgText = `📤 **New Withdraw Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amt} USDT**\n🏦 Address: \`${address}\``;
         const inlineKeyboard = {
             inline_keyboard: [[
                 { text: "✅ Approve", callback_data: `approve_${reqId}` },
