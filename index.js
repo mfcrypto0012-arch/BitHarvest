@@ -1,5 +1,6 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const https = require('https');
 const app = express();
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -53,44 +54,79 @@ app.use((req, res, next) => {
     next();
 });
 
-async function sendTelegramMessage(chatId, text, replyMarkup = null) {
-    try {
-        let body = { chat_id: chatId, text: text, parse_mode: 'Markdown' };
-        if (replyMarkup) body.reply_markup = replyMarkup;
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-    } catch (e) {
-        console.log("Telegram API Error:", e);
-    }
+// Native HTTPS Telegram Sender (No crash risk)
+function sendTelegramMessage(chatId, text, replyMarkup = null) {
+    if (!BOT_TOKEN) return;
+    const payload = JSON.stringify({
+        chat_id: chatId,
+        text: text,
+        parse_mode: 'Markdown',
+        reply_markup: replyMarkup
+    });
+
+    const options = {
+        hostname: 'api.telegram.org',
+        path: `/bot${BOT_TOKEN}/sendMessage`,
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload)
+        }
+    };
+
+    const req = https.request(options, (res) => {});
+    req.on('error', (e) => console.error('TG Send Error:', e));
+    req.write(payload);
+    req.end();
 }
 
-async function editTelegramMessage(chatId, messageId, text, replyMarkup = null) {
-    try {
-        let body = { chat_id: chatId, message_id: messageId, text: text, parse_mode: 'Markdown' };
-        if (replyMarkup) body.reply_markup = replyMarkup;
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/editMessageText`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-        });
-    } catch (e) {
-        console.log("Telegram Edit Error:", e);
-    }
+function editTelegramMessage(chatId, messageId, text, replyMarkup = null) {
+    if (!BOT_TOKEN) return;
+    const payload = JSON.stringify({
+        chat_id: chatId,
+        message_id: messageId,
+        text: text,
+        parse_mode: 'Markdown',
+        reply_markup: replyMarkup
+    });
+
+    const options = {
+        hostname: 'api.telegram.org',
+        path: `/bot${BOT_TOKEN}/editMessageText`,
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload)
+        }
+    };
+
+    const req = https.request(options, (res) => {});
+    req.on('error', (e) => console.error('TG Edit Error:', e));
+    req.write(payload);
+    req.end();
 }
 
-async function answerCallbackQuery(callbackQueryId, text) {
-    try {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/answerCallbackQuery`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ callback_query_id: callbackQueryId, text: text })
-        });
-    } catch (e) {
-        console.log("Callback Answer Error:", e);
-    }
+function answerCallbackQuery(callbackQueryId, text) {
+    if (!BOT_TOKEN) return;
+    const payload = JSON.stringify({
+        callback_query_id: callbackQueryId,
+        text: text
+    });
+
+    const options = {
+        hostname: 'api.telegram.org',
+        path: `/bot${BOT_TOKEN}/answerCallbackQuery`,
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': Buffer.byteLength(payload)
+        }
+    };
+
+    const req = https.request(options, (res) => {});
+    req.on('error', (e) => console.error('TG Callback Error:', e));
+    req.write(payload);
+    req.end();
 }
 
 app.get('/api/user/:id', async (req, res) => {
@@ -276,9 +312,9 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                     await user.save();
                 }
 
-                await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
+                sendTelegramMessage(chatId, "🚀 *Welcome to BitHarvest USDT Mining Mini App!*\n\nClick the WebApp button below to launch.");
             } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
-                await sendTelegramMessage(chatId, `👑 **BitHarvest Admin Access**\n\nClick below to open Admin Dashboard:`, {
+                sendTelegramMessage(chatId, `👑 *BitHarvest Admin Access*\n\nClick below to open Admin Dashboard:`, {
                     inline_keyboard: [[
                         { text: "🌐 Open Admin Dashboard", url: `https://bitharvest-qtyp.onrender.com/admin/dashboard?key=${ADMIN_ID}` }
                     ]]
@@ -366,7 +402,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `✅ Your withdrawal of ${reqDoc.amount} USDT has been approved!`);
                     }
-                    editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${reqDoc.userId}\nAmount: ${reqDoc.amount} USDT`);
+                    editTelegramMessage(chatId, messageId, `✅ *Request Approved*\nUser ID: ${reqDoc.userId}\nAmount: ${reqDoc.amount} USDT`);
                 } else {
                     if (reqDoc.type === 'deposit' && u) {
                         let idx = u.deposits.findIndex(d => d.id === reqId || d.id === reqDoc.reqId);
@@ -391,7 +427,7 @@ app.post(`/api/webhook/${BOT_TOKEN}`, async (req, res) => {
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined.`);
                     }
-                    editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${reqDoc.userId}\nAmount: ${reqDoc.amount} USDT`);
+                    editTelegramMessage(chatId, messageId, `❌ *Request Rejected*\nUser ID: ${reqDoc.userId}\nAmount: ${reqDoc.amount} USDT`);
                 }
 
                 await PendingRequest.deleteOne({ reqId });
@@ -452,118 +488,91 @@ app.get('/admin/dashboard', async (req, res) => {
         }
     }
 
-    let html = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>BitHarvest Admin Panel</title>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>
-                * { box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
-                body { background: #0c0a09; color: #f3f4f6; margin: 0; padding: 20px; }
-                .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
-                .header h1 { color: #f59e0b; margin: 0; font-size: 24px; }
-                .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 25px; }
-                .stat-card { background: #1c1917; border: 1px solid #292524; border-radius: 12px; padding: 15px; }
-                .stat-title { font-size: 11px; color: #a8a29e; text-transform: uppercase; }
-                .stat-value { font-size: 20px; font-weight: bold; color: #fbbf24; margin-top: 6px; }
-                .card { background: #1c1917; border: 1px solid #292524; border-radius: 12px; padding: 18px; margin-bottom: 20px; }
-                .card h3 { color: #f59e0b; margin-top: 0; font-size: 16px; border-bottom: 1px solid #292524; padding-bottom: 8px; }
-                .search-box { display: flex; gap: 10px; margin-bottom: 15px; }
-                input, textarea { background: #0c0a09; border: 1px solid #44403c; color: #fff; padding: 10px; border-radius: 8px; width: 100%; font-size: 14px; }
-                .btn { background: #f59e0b; color: #000; border: none; font-weight: bold; padding: 10px 18px; border-radius: 8px; cursor: pointer; }
-                .btn-green { background: #22c55e; color: #fff; }
-                .btn-red { background: #ef4444; color: #fff; }
-                table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                th, td { padding: 10px; text-align: left; border-bottom: 1px solid #292524; font-size: 12px; }
-                th { color: #a8a29e; }
-                .user-details-box { background: #0c0a09; padding: 14px; border-radius: 8px; border: 1px solid #292524; margin-top: 10px; font-size: 13px; line-height: 1.8; }
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <h1>👑 BitHarvest Admin Panel</h1>
-                <span style="font-size: 12px; color: #22c55e;">● Live System</span>
+    let html = `<!DOCTYPE html>
+<html>
+<head>
+    <title>BitHarvest Admin Panel</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        * { box-sizing: border-box; font-family: sans-serif; }
+        body { background: #0c0a09; color: #f3f4f6; margin: 0; padding: 20px; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .header h1 { color: #f59e0b; margin: 0; font-size: 22px; }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 20px; }
+        .stat-card { background: #1c1917; border: 1px solid #292524; border-radius: 8px; padding: 12px; }
+        .stat-title { font-size: 11px; color: #a8a29e; }
+        .stat-value { font-size: 18px; font-weight: bold; color: #fbbf24; margin-top: 4px; }
+        .card { background: #1c1917; border: 1px solid #292524; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
+        .search-box { display: flex; gap: 8px; margin-bottom: 12px; }
+        input { background: #0c0a09; border: 1px solid #44403c; color: #fff; padding: 8px; border-radius: 6px; width: 100%; }
+        .btn { background: #f59e0b; color: #000; border: none; font-weight: bold; padding: 8px 14px; border-radius: 6px; cursor: pointer; }
+        .btn-green { background: #22c55e; color: #fff; }
+        .btn-red { background: #ef4444; color: #fff; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+        th, td { padding: 8px; text-align: left; border-bottom: 1px solid #292524; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>👑 BitHarvest Admin</h1>
+        <span style="color:#22c55e; font-size:12px;">● Live</span>
+    </div>
+    <div class="stats-grid">
+        <div class="stat-card"><div class="stat-title">Total Users</div><div class="stat-value">${totalUsers}</div></div>
+        <div class="stat-card"><div class="stat-title">User Balances</div><div class="stat-value">${totalBalances.toFixed(2)} USDT</div></div>
+        <div class="stat-card"><div class="stat-title">Paid Out</div><div class="stat-value">${totalPaidOut.toFixed(2)} USDT</div></div>
+        <div class="stat-card"><div class="stat-title">Pending</div><div class="stat-value">${requests.length}</div></div>
+    </div>
+    <div class="card">
+        <h3>🔍 Search User</h3>
+        <form method="GET" action="/admin/dashboard" class="search-box">
+            <input type="hidden" name="key" value="${ADMIN_ID}">
+            <input type="text" name="search" placeholder="User ID or Username" value="${searchId}">
+            <button type="submit" class="btn">Search</button>
+        </form>
+        ${searchedUser ? `
+            <div style="font-size:13px; line-height:1.6;">
+                <p>👤 <b>User:</b> @${searchedUser.username} \vert{} <b>ID:</b>${searchedUser.id}</p>
+                <p>💰 <b>Balance:</b> ${searchedUser.balance.toFixed(4)} USDT \vert{} ⚡ <b>GHS:</b>${searchedUser.ghs}</p>
+                <p>📥 <b>Deposits:</b> ${userTotalDeposit.toFixed(2)} USDT \vert{} 📤 <b>Withdraws:</b> ${userTotalWithdraw.toFixed(2)} USDT</p>
+                <p>👥 <b>Ref Counts:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length \vert{}\vert{} 0} \vert{} L3: ${searchedUser.referrals?.level3?.length || 0}</p>
+                <p>🔗 <b>Referred By:</b> ${searchedUser.referredBy || 'Direct Join'}</p>
             </div>
-            <div class="stats-grid">
-                <div class="stat-card"><div class="stat-title">Total Users</div><div class="stat-value">${totalUsers}</div></div>
-                <div class="stat-card"><div class="stat-title">User Balances</div><div class="stat-value">${totalBalances.toFixed(2)} USDT</div></div>
-                <div class="stat-card"><div class="stat-title">Paid Out</div><div class="stat-value">${totalPaidOut.toFixed(2)} USDT</div></div>
-                <div class="stat-card"><div class="stat-title">Pending Requests</div><div class="stat-value">${requests.length}</div></div>
-            </div>
-            <div class="card">
-                <h3>🔍 Search User Details & Manage Balance</h3>
-                <form method="GET" action="/admin/dashboard" class="search-box">
-                    <input type="hidden" name="key" value="${ADMIN_ID}">
-                    <input type="text" name="search" placeholder="Enter Telegram User ID or Username" value="${searchId}">
-                    <button type="submit" class="btn">Search</button>
-                </form>
-                ${searchedUser ? `
-                    <div class="user-details-box">
-                        <p>👤 <b>User Name:</b> @${searchedUser.username} \vert{} <b>ID:</b> <code>${searchedUser.id}</code></p>
-                        <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> \vert{} ⚡ <b>GHS Power:</b>${searchedUser.ghs} GHS</p>
-                        <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
-                        <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span></p>
-                        <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length \vert{}\vert{} 0} \vert{} L3: ${searchedUser.referrals?.level3?.length || 0}</p>
-                        <p>🎁 <b>Total Referral Commission:</b> <span style="color:#fbbf24; font-weight:bold;">${totalRefEarn.toFixed(4)} USDT</span></p>
-                        <p>🔗 <b>Referred By ID:</b> ${searchedUser.referredBy || 'Direct Join'}</p>
-                        <hr style="border-color:#292524; margin:12px 0;">
-                        <b>⚙️ Manage User Balance:</b>
-                        <div style="display:flex; gap:10px; margin-top:8px;">
-                            <input type="number" id="mod-amt" placeholder="Enter USDT amount">
-                            <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">+ Add</button>
-                            <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">- Cut</button>
-                        </div>
-                    </div>
-                ` : searchId ? `<p style="color:#ef4444; font-size:12px;">User not found!</p>` : ''}
-            </div>
-            <div class="card">
-                <h3>⏳ Pending Requests</h3>
-                ${requests.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No pending requests right now.</p>` : `
-                    <table>
-                        <tr><th>Type</th><th>User ID</th><th>Amount</th><th>Details</th><th>Action</th></tr>
-                        ${requests.map(r => `
-                            <tr>
-                                <td><b style="color:${r.type==='deposit'?'#22c55e':'#ef4444'}">${r.type.toUpperCase()}</b></td>
-                                <td>${r.userId}</td>
-                                <td><b>${r.amount} USDT</b></td>
-                                <td>${r.txHash ? 'Tx: ' + r.txHash.substring(0,10) + '...' : 'Addr: ' + r.address.substring(0,10) + '...'}</td>
-                                <td>
-                                    <button class="btn btn-green" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'approve')">Approve</button>
-                                    <button class="btn btn-red" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'reject')">Reject</button>
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </table>
-                `}
-            </div>
-            <script>
-                async function handleReq(reqId, action) {
-                    let res = await fetch('/admin/action', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ reqId, action, adminKey: '${ADMIN_ID}' })
-                    });
-                    let data = await res.json();
-                    alert(data.message);
-                    location.reload();
-                }
-                async function modifyBal(userId, action) {
-                    let amount = document.getElementById('mod-amt').value;
-                    if(!amount) return alert("Enter amount!");
-                    let res = await fetch('/admin/manage-balance', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ userId, amount, action, adminKey: '${ADMIN_ID}' })
-                    });
-                    let data = await res.json();
-                    alert(data.message);
-                    location.reload();
-                }
-            </script>
-        </body>
-        </html>
-    `;
+        ` : ''}
+    </div>
+    <div class="card">
+        <h3>⏳ Pending Requests</h3>
+        ${requests.length === 0 ? '<p style="font-size:12px;">No requests.</p>' : `
+            <table>
+                <tr><th>Type</th><th>User</th><th>Amount</th><th>Action</th></tr>
+                ${requests.map(r => `
+                    <tr>
+                        <td><b>${r.type.toUpperCase()}</b></td>
+                        <td>${r.userId}</td>
+                        <td>${r.amount} USDT</td>
+                        <td>
+                            <button class="btn btn-green" onclick="handleReq('${r.reqId}', 'approve')">Approve</button>
+                            <button class="btn btn-red" onclick="handleReq('${r.reqId}', 'reject')">Reject</button>
+                        </td>
+                    </tr>
+                `).join('')}
+            </table>
+        `}
+    </div>
+    <script>
+        async function handleReq(reqId, action) {
+            let res = await fetch('/admin/action', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ reqId, action, adminKey: '${ADMIN_ID}' })
+            });
+            let data = await res.json();
+            alert(data.message);
+            location.reload();
+        }
+    </script>
+</body>
+</html>`;
     res.send(html);
 });
 
@@ -591,41 +600,6 @@ app.post('/admin/action', async (req, res) => {
             u.markModified('deposits');
             await u.save();
 
-            if (u.referredBy) {
-                let refL1 = await User.findOne({ id: u.referredBy });
-                if (refL1) {
-                    let commL1 = depAmount * 0.15;
-                    refL1.balance += commL1;
-                    refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
-                    refL1.markModified('refEarnings');
-                    await refL1.save();
-                    sendTelegramMessage(refL1.id, `🎁 Received +${commL1.toFixed(4)} USDT (15% Level 1 Referral Commission)!`);
-
-                    if (refL1.referredBy) {
-                        let refL2 = await User.findOne({ id: refL1.referredBy });
-                        if (refL2) {
-                            let commL2 = depAmount * 0.02;
-                            refL2.balance += commL2;
-                            refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
-                            refL2.markModified('refEarnings');
-                            await refL2.save();
-                            sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
-
-                            if (refL2.referredBy) {
-                                let refL3 = await User.findOne({ id: refL2.referredBy });
-                                if (refL3) {
-                                    let commL3 = depAmount * 0.01;
-                                    refL3.balance += commL3;
-                                    refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
-                                    refL3.markModified('refEarnings');
-                                    await refL3.save();
-                                    sendTelegramMessage(refL3.id, `🎁 Received +${commL3.toFixed(4)} USDT (1% Level 3 Referral Commission)!`);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
         } else if (reqDoc.type === 'withdraw' && u) {
             u.balance -= parseFloat(reqDoc.amount);
@@ -640,59 +614,10 @@ app.post('/admin/action', async (req, res) => {
             await u.save();
             sendTelegramMessage(reqDoc.userId, `✅ Your withdrawal of ${reqDoc.amount} USDT has been approved!`);
         }
-    } else {
-        if (reqDoc.type === 'deposit' && u) {
-            let idx = u.deposits.findIndex(d => d.id === reqId || d.id === reqDoc.reqId);
-            if (idx !== -1) {
-                u.deposits[idx].status = 'DECLINED';
-            } else {
-                let p = u.deposits.find(d => d.status === 'PENDING');
-                if (p) p.status = 'DECLINED';
-            }
-            u.markModified('deposits');
-            await u.save();
-            sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
-        } else if (reqDoc.type === 'withdraw' && u) {
-            let idx = u.withdrawals.findIndex(w => w.id === reqId || w.id === reqDoc.reqId);
-            if (idx !== -1) {
-                u.withdrawals[idx].status = 'DECLINED';
-            } else {
-                let p = u.withdrawals.find(w => w.status === 'PENDING' || w.status === 'PEND1NG');
-                if (p) p.status = 'DECLINED';
-            }
-            u.markModified('withdrawals');
-            await u.save();
-            sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined.`);
-        }
     }
 
     await PendingRequest.deleteOne({ reqId });
     res.json({ success: true, message: "Action executed successfully!" });
-});
-
-app.post('/admin/manage-balance', async (req, res) => {
-    const { userId, amount, action, adminKey } = req.body;
-    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
-    const u = await User.findOne({ id: userId });
-    if (!u) return res.status(404).json({ success: false, message: "User not found!" });
-
-    const val = parseFloat(amount);
-    if (isNaN(val) || val <= 0) return res.status(400).json({ success: false, message: "Invalid amount!" });
-
-    if (action === 'add') {
-        u.balance += val;
-        await u.save();
-        sendTelegramMessage(userId, `🎁 Admin added +${val} USDT to your balance.`);
-        return res.json({ success: true, message: `Added ${val} USDT to ${userId}` });
-    } else if (action === 'cut') {
-        u.balance = Math.max(0, u.balance - val);
-        await u.save();
-        sendTelegramMessage(userId, `⚠️ Admin deducted -${val} USDT from your balance.`);
-        return res.json({ success: true, message: `Deducted ${val} USDT from ${userId}` });
-    }
-
-    res.status(400).json({ success: false, message: "Invalid action" });
 });
 
 const PORT = process.env.PORT || 3000;
