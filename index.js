@@ -155,10 +155,12 @@ async function handleWebhookLogic(req, res) {
                     }
                 }
 
-                await sendTelegramMessage(chatId, "🚀 **Welcome to BitHarvest USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
+                // Updated Welcome Message
+                await sendTelegramMessage(chatId, "🚀 **Welcome to NBX Mining USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
             } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
-                await sendTelegramMessage(chatId, `👑 **BitHarvest Admin Access**\n\nClick below to open Admin Dashboard:`, {
-                    inline_keyboard: [[ { text: "🌐 Open Admin Dashboard", url: `https://bitharvest-qtyp.onrender.com/admin/dashboard?key=${ADMIN_ID}` } ]]
+                const renderAppUrl = process.env.RENDER_EXTERNAL_URL || "https://dashboard.render.com";
+                await sendTelegramMessage(chatId, `👑 **NBX Mining Admin Access**\n\nClick below to open Admin Dashboard:`, {
+                    inline_keyboard: [[ { text: "🌐 Open Admin Dashboard", url: `${renderAppUrl}/admin/dashboard?key=${ADMIN_ID}` } ]]
                 });
             }
         } else if (update.callback_query) {
@@ -341,7 +343,7 @@ app.get('/admin/dashboard', async (req, res) => {
         <!DOCTYPE html>
         <html>
         <head>
-            <title>BitHarvest Admin Panel</title>
+            <title>NBX Mining Admin Panel</title>
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <style>
                 * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
@@ -367,7 +369,7 @@ app.get('/admin/dashboard', async (req, res) => {
         </head>
         <body>
             <div class="header">
-                <h1>👑 BitHarvest Admin Panel</h1>
+                <h1>👑 NBX Mining Admin Panel</h1>
                 <span style="font-size: 12px; color: #22c55e;">● Live System</span>
             </div>
             <div class="stats-grid">
@@ -699,11 +701,13 @@ app.post('/api/withdraw', async (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
     console.log(`Server running on port ${PORT}`);
-    const RENDER_URL = process.env.RENDER_EXTERNAL_URL || "https://bitharvest-qtyp.onrender.com";
-    try {
-        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/api/webhook/${BOT_TOKEN}`);
-        console.log("Telegram Webhook Set Successfully!");
-    } catch (e) {
-        console.log("Failed to set webhook:", e);
+    const RENDER_URL = process.env.RENDER_EXTERNAL_URL;
+    if (RENDER_URL) {
+        try {
+            await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=${RENDER_URL}/api/webhook/${BOT_TOKEN}`);
+            console.log("Telegram Webhook Set Successfully!");
+        } catch (e) {
+            console.log("Failed to set webhook:", e);
+        }
     }
 });
