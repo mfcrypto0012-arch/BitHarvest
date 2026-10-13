@@ -6,6 +6,10 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_ID;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 
+// Default URLs (Aap environment variables mein bhi set kar sakte hain)
+const WEBAPP_URL = process.env.WEBAPP_URL || 'https://your-webapp-link.com'; 
+const BANNER_IMAGE_URL = process.env.BANNER_IMAGE_URL || 'https://i.ibb.co/your-banner-image.jpg';
+
 mongoose.connect(MONGO_URI)
     .then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
@@ -53,6 +57,7 @@ app.use((req, res, next) => {
     next();
 });
 
+// Helper Functions
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     try {
         let body = { chat_id: chatId, text: text, parse_mode: 'Markdown' };
@@ -64,6 +69,23 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
         });
     } catch (e) {
         console.log("Telegram API Error:", e);
+    }
+}
+
+// 24TRX Style Photo Message Helper
+async function sendTelegramPhoto(chatId, photoUrl, caption, replyMarkup = null) {
+    try {
+        let body = { chat_id: chatId, photo: photoUrl, caption: caption, parse_mode: 'Markdown' };
+        if (replyMarkup) body.reply_markup = replyMarkup;
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+    } catch (e) {
+        console.log("Telegram Photo API Error:", e);
+        // Fallback to text message if photo fails
+        await sendTelegramMessage(chatId, caption, replyMarkup);
     }
 }
 
@@ -155,8 +177,26 @@ async function handleWebhookLogic(req, res) {
                     }
                 }
 
-                // Updated Welcome Message
-                await sendTelegramMessage(chatId, "🚀 **Welcome to NBX Mining USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
+                // 24TRX Style Start Message & Open App Button
+                const welcomeCaption = 
+`🎁 *Welcome to NBX Mining!*
+
+_Ready to grow your portfolio?_
+
+✅ Earn USDT
+✅ Invite Friends
+✅ Instant Payouts
+
+🚀 *Launch the App to begin your journey!*`;
+
+                const webAppKeyboard = {
+                    inline_keyboard: [[
+                        { text: "⛏️ Open NBX Mining", web_app: { url: WEBAPP_URL } }
+                    ]]
+                };
+
+                await sendTelegramPhoto(chatId, BANNER_IMAGE_URL, welcomeCaption, webAppKeyboard);
+
             } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
                 const renderAppUrl = process.env.RENDER_EXTERNAL_URL || "https://dashboard.render.com";
                 await sendTelegramMessage(chatId, `👑 **NBX Mining Admin Access**\n\nClick below to open Admin Dashboard:`, {
@@ -260,7 +300,6 @@ async function handleWebhookLogic(req, res) {
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
                     } else if (reqDoc.type === 'withdraw' && u) {
-                        // Refunds balance on withdrawal decline
                         u.balance += parseFloat(reqDoc.amount);
                         let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
                         if (idx !== -1) {
@@ -674,7 +713,6 @@ app.post('/api/withdraw', async (req, res) => {
         return res.status(400).json({ success: false, message: "Insufficient balance" });
     }
 
-    // Deduct balance instantly upon request
     u.balance -= amt;
 
     const reqId = 'wd_' + Date.now();
