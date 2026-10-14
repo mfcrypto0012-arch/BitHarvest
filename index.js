@@ -37,7 +37,7 @@ const pendingRequestSchema = new mongoose.Schema({
     type: { type: String, required: true },
     userId: { type: String, required: true },
     amount: { type: String, required: true },
-    usdtAmount: { type: Number, default: 1 }, // Added to keep track of original entered USDT amount
+    usdtAmount: { type: Number, default: 1 },
     coin: { type: String },
     txHash: { type: String },
     address: { type: String },
@@ -196,7 +196,7 @@ async function handleWebhookLogic(req, res) {
 
                 if (isApprove) {
                     if (reqDoc.type === 'deposit' && u) {
-                        // Use exact entered USDT amount for GHS and Commissions
+                        // Strictly use entered USDT amount for GHS and Commissions
                         let numericDepAmount = reqDoc.usdtAmount || parseFloat(reqDoc.amount) || 1;
                         u.ghs += numericDepAmount;
 
@@ -210,7 +210,7 @@ async function handleWebhookLogic(req, res) {
                         u.markModified('deposits');
                         await u.save();
 
-                        // Multi-level Referral Commission (Level 1: 15%, Level 2: 3%, Level 3: 1%)
+                        // Multi-level Referral Commission based on entered USDT amount (Level 1: 15%, Level 2: 3%, Level 3: 1%)
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
@@ -339,7 +339,6 @@ app.get('/admin/dashboard', async (req, res) => {
             if (searchedUser.deposits) {
                 searchedUser.deposits.forEach(d => {
                     if (d.status === 'PAID') {
-                        // Calculate Total Approved Deposit based on entered USDT amount
                         userTotalDeposit += parseFloat(d.usdtAmount || d.amount || 0);
                     }
                 });
@@ -657,13 +656,12 @@ app.post('/api/claim', async (req, res) => {
 });
 
 app.post('/api/deposit', async (req, res) => {
-    const { userId, username, amount, coin, txHash } = req.body;
+    const { userId, username, amount, usdtAmount, coin, txHash } = req.body;
     if (!userId || !amount || !txHash) {
         return res.status(400).json({ success: false, message: "Invalid deposit data." });
     }
 
-    // Extract exact entered USDT amount (e.g. 1 USDT)
-    let usdtVal = parseFloat(amount) || 1;
+    let exactUsdtVal = parseFloat(usdtAmount) || parseFloat(amount) || 1;
 
     let u = await User.findOne({ id: userId });
     if (!u) u = new User({ id: userId, username: username || 'User' });
@@ -673,7 +671,7 @@ app.post('/api/deposit', async (req, res) => {
     u.deposits.unshift({ 
         id: reqId, 
         amount: amount, 
-        usdtAmount: usdtVal,
+        usdtAmount: exactUsdtVal,
         coin: coin || 'USDT', 
         txHash, 
         status: 'PENDING', 
@@ -687,14 +685,14 @@ app.post('/api/deposit', async (req, res) => {
         type: 'deposit', 
         userId, 
         amount: amount, 
-        usdtAmount: usdtVal,
+        usdtAmount: exactUsdtVal,
         coin: coin || 'USDT',
         txHash, 
         status: 'PENDING' 
     });
 
     if (ADMIN_ID) {
-        const msgText = `📥 **New Deposit Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amount}**\n🪙 Coin: **${coin || 'USDT'}**\n🔑 TxHash: \`${txHash}\``;
+        const msgText = `📥 **New Deposit Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amount}** (${exactUsdtVal} USDT)\n🪙 Coin: **${coin || 'USDT'}**\n🔑 TxHash: \`${txHash}\``;
         const inlineKeyboard = {
             inline_keyboard: [[
                 { text: "✅ Approve", callback_data: `approve_${reqId}` },
