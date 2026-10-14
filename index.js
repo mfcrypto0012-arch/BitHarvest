@@ -36,7 +36,8 @@ const pendingRequestSchema = new mongoose.Schema({
     reqId: { type: String, required: true, unique: true },
     type: { type: String, required: true },
     userId: { type: String, required: true },
-    amount: { type: Number, required: true },
+    amount: { type: String, required: true }, // Updated to String to handle coin symbols like "3.03 TRX"
+    coin: { type: String },
     txHash: { type: String },
     address: { type: String },
     status: { type: String, default: 'PENDING' }
@@ -155,7 +156,6 @@ async function handleWebhookLogic(req, res) {
                     }
                 }
 
-                // Updated Welcome Message
                 await sendTelegramMessage(chatId, "🚀 **Welcome to NBX Mining USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
             } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
                 const renderAppUrl = process.env.RENDER_EXTERNAL_URL || "https://dashboard.render.com";
@@ -182,8 +182,9 @@ async function handleWebhookLogic(req, res) {
 
                 if (isApprove) {
                     if (reqDoc.type === 'deposit' && u) {
-                        const depAmount = parseFloat(reqDoc.amount);
-                        u.ghs += depAmount;
+                        // Extract numeric value from amount string (e.g., "3.03 TRX" -> 3.03) for GHS & commission calculation
+                        let numericDepAmount = parseFloat(reqDoc.amount) || 1;
+                        u.ghs += numericDepAmount;
 
                         let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
                         if (idx !== -1) {
@@ -199,7 +200,7 @@ async function handleWebhookLogic(req, res) {
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
-                                let commL1 = depAmount * 0.15;
+                                let commL1 = numericDepAmount * 0.15;
                                 refL1.balance += commL1;
                                 refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
                                 refL1.markModified('refEarnings');
@@ -209,7 +210,7 @@ async function handleWebhookLogic(req, res) {
                                 if (refL1.referredBy) {
                                     let refL2 = await User.findOne({ id: refL1.referredBy });
                                     if (refL2) {
-                                        let commL2 = depAmount * 0.02;
+                                        let commL2 = numericDepAmount * 0.02;
                                         refL2.balance += commL2;
                                         refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
                                         refL2.markModified('refEarnings');
@@ -219,7 +220,7 @@ async function handleWebhookLogic(req, res) {
                                         if (refL2.referredBy) {
                                             let refL3 = await User.findOne({ id: refL2.referredBy });
                                             if (refL3) {
-                                                let commL3 = depAmount * 0.01;
+                                                let commL3 = numericDepAmount * 0.01;
                                                 refL3.balance += commL3;
                                                 refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
                                                 refL3.markModified('refEarnings');
@@ -232,7 +233,7 @@ async function handleWebhookLogic(req, res) {
                             }
                         }
 
-                        sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
+                        sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!`);
                     } else if (reqDoc.type === 'withdraw' && u) {
                         let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
                         if (idx !== -1) {
@@ -246,7 +247,7 @@ async function handleWebhookLogic(req, res) {
                         sendTelegramMessage(reqDoc.userId, `✅ Your withdrawal of ${reqDoc.amount} USDT has been approved!`);
                     }
 
-                    editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${reqDoc.userId}\nAmount:${reqDoc.amount} USDT`);
+                    editTelegramMessage(chatId, messageId, `✅ **Request Approved**\nUser ID: ${reqDoc.userId}\nAmount:${reqDoc.amount}`);
                 } else {
                     if (reqDoc.type === 'deposit' && u) {
                         let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
@@ -260,7 +261,6 @@ async function handleWebhookLogic(req, res) {
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
                     } else if (reqDoc.type === 'withdraw' && u) {
-                        // Refunds balance on withdrawal decline
                         u.balance += parseFloat(reqDoc.amount);
                         let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
                         if (idx !== -1) {
@@ -274,7 +274,7 @@ async function handleWebhookLogic(req, res) {
                         sendTelegramMessage(reqDoc.userId, `❌ Your withdrawal request was declined and funds refunded.`);
                     }
 
-                    editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${reqDoc.userId}\nAmount:${reqDoc.amount} USDT`);
+                    editTelegramMessage(chatId, messageId, `❌ **Request Rejected**\nUser ID: ${reqDoc.userId}\nAmount:${reqDoc.amount}`);
                 }
 
                 await PendingRequest.deleteOne({ reqId });
@@ -413,7 +413,7 @@ app.get('/admin/dashboard', async (req, res) => {
                             <tr>
                                 <td><b style="color:${r.type==='deposit'?'#22c55e':'#ef4444'}">${r.type.toUpperCase()}</b></td>
                                 <td>${r.userId}</td>
-                                <td><b>${r.amount} USDT</b></td>
+                                <td><b>${r.amount}</b></td>
                                 <td>${r.txHash ? 'Tx: ' + r.txHash.substring(0,10) + '...' : 'Addr: ' + r.address.substring(0,10) + '...'}</td>
                                 <td>
                                     <button class="btn btn-green" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'approve')">Approve</button>
@@ -481,8 +481,8 @@ app.post('/admin/action', async (req, res) => {
 
     if (action === 'approve') {
         if (reqDoc.type === 'deposit' && u) {
-            const depAmount = parseFloat(reqDoc.amount);
-            u.ghs += depAmount;
+            let numericDepAmount = parseFloat(reqDoc.amount) || 1;
+            u.ghs += numericDepAmount;
             
             let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
             if (idx !== -1) {
@@ -497,7 +497,7 @@ app.post('/admin/action', async (req, res) => {
             if (u.referredBy) {
                 let refL1 = await User.findOne({ id: u.referredBy });
                 if (refL1) {
-                    let commL1 = depAmount * 0.15;
+                    let commL1 = numericDepAmount * 0.15;
                     refL1.balance += commL1;
                     refL1.refEarnings.level1 = (refL1.refEarnings.level1 || 0) + commL1;
                     refL1.markModified('refEarnings');
@@ -507,7 +507,7 @@ app.post('/admin/action', async (req, res) => {
                     if (refL1.referredBy) {
                         let refL2 = await User.findOne({ id: refL1.referredBy });
                         if (refL2) {
-                            let commL2 = depAmount * 0.02;
+                            let commL2 = numericDepAmount * 0.02;
                             refL2.balance += commL2;
                             refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
                             refL2.markModified('refEarnings');
@@ -517,7 +517,7 @@ app.post('/admin/action', async (req, res) => {
                             if (refL2.referredBy) {
                                 let refL3 = await User.findOne({ id: refL2.referredBy });
                                 if (refL3) {
-                                    let commL3 = depAmount * 0.01;
+                                    let commL3 = numericDepAmount * 0.01;
                                     refL3.balance += commL3;
                                     refL3.refEarnings.level3 = (refL3.refEarnings.level3 || 0) + commL3;
                                     refL3.markModified('refEarnings');
@@ -530,7 +530,7 @@ app.post('/admin/action', async (req, res) => {
                 }
             }
 
-            sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} USDT has been approved!`);
+            sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!`);
         } else if (reqDoc.type === 'withdraw' && u) {
             let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
             if (idx !== -1) {
@@ -634,24 +634,41 @@ app.post('/api/claim', async (req, res) => {
 });
 
 app.post('/api/deposit', async (req, res) => {
-    const { userId, username, amount, txHash } = req.body;
-    let amt = parseFloat(amount);
-    if (!userId || !amt || amt < 1 || amt > 1000) {
-        return res.status(400).json({ success: false, message: "Invalid amount. Min 1$ & Max 1000$" });
+    const { userId, username, amount, coin, txHash } = req.body;
+    if (!userId || !amount || !txHash) {
+        return res.status(400).json({ success: false, message: "Invalid deposit data." });
     }
 
     let u = await User.findOne({ id: userId });
     if (!u) u = new User({ id: userId, username: username || 'User' });
 
     const reqId = 'dep_' + Date.now();
-    u.deposits.unshift({ id: reqId, amount: amt, txHash, status: 'PENDING', date: new Date().toLocaleDateString() });
+    
+    // Save exact coin name and calculated coin amount in user deposit history
+    u.deposits.unshift({ 
+        id: reqId, 
+        amount: amount, // e.g., "3.03 TRX"
+        coin: coin || 'USDT', 
+        txHash, 
+        status: 'PENDING', 
+        date: new Date().toLocaleDateString() 
+    });
     u.markModified('deposits');
     await u.save();
 
-    await PendingRequest.create({ reqId, type: 'deposit', userId, amount: amt, txHash, status: 'PENDING' });
+    // Save exact coin amount and name in PendingRequest for Admin panel & telegram notification
+    await PendingRequest.create({ 
+        reqId, 
+        type: 'deposit', 
+        userId, 
+        amount: amount, // e.g., "3.03 TRX"
+        coin: coin || 'USDT',
+        txHash, 
+        status: 'PENDING' 
+    });
 
     if (ADMIN_ID) {
-        const msgText = `📥 **New Deposit Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amt} USDT**\n🔑 TxHash: \`${txHash}\``;
+        const msgText = `📥 **New Deposit Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amount}**\n🪙 Coin: **${coin || 'USDT'}**\n🔑 TxHash: \`${txHash}\``;
         const inlineKeyboard = {
             inline_keyboard: [[
                 { text: "✅ Approve", callback_data: `approve_${reqId}` },
@@ -674,7 +691,6 @@ app.post('/api/withdraw', async (req, res) => {
         return res.status(400).json({ success: false, message: "Insufficient balance" });
     }
 
-    // Deduct balance instantly upon request
     u.balance -= amt;
 
     const reqId = 'wd_' + Date.now();
