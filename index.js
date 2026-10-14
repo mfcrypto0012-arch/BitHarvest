@@ -36,7 +36,8 @@ const pendingRequestSchema = new mongoose.Schema({
     reqId: { type: String, required: true, unique: true },
     type: { type: String, required: true },
     userId: { type: String, required: true },
-    amount: { type: String, required: true }, // Updated to String to handle coin symbols like "3.03 TRX"
+    amount: { type: String, required: true },
+    usdtAmount: { type: Number, default: 1 }, // Added to keep track of original entered USDT amount
     coin: { type: String },
     txHash: { type: String },
     address: { type: String },
@@ -65,6 +66,19 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
         });
     } catch (e) {
         console.log("Telegram API Error:", e);
+    }
+}
+
+async function sendTelegramPhoto(chatId, photoUrl, caption = '') {
+    try {
+        let body = { chat_id: chatId, photo: photoUrl, caption: caption, parse_mode: 'Markdown' };
+        await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+    } catch (e) {
+        console.log("Telegram Photo Broadcast Error:", e);
     }
 }
 
@@ -182,8 +196,8 @@ async function handleWebhookLogic(req, res) {
 
                 if (isApprove) {
                     if (reqDoc.type === 'deposit' && u) {
-                        // Extract numeric value from amount string (e.g., "3.03 TRX" -> 3.03) for GHS & commission calculation
-                        let numericDepAmount = parseFloat(reqDoc.amount) || 1;
+                        // Use exact entered USDT amount for GHS and Commissions
+                        let numericDepAmount = reqDoc.usdtAmount || parseFloat(reqDoc.amount) || 1;
                         u.ghs += numericDepAmount;
 
                         let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
@@ -196,7 +210,7 @@ async function handleWebhookLogic(req, res) {
                         u.markModified('deposits');
                         await u.save();
 
-                        // Multi-level Referral Commission
+                        // Multi-level Referral Commission (Level 1: 15%, Level 2: 3%, Level 3: 1%)
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
@@ -210,12 +224,12 @@ async function handleWebhookLogic(req, res) {
                                 if (refL1.referredBy) {
                                     let refL2 = await User.findOne({ id: refL1.referredBy });
                                     if (refL2) {
-                                        let commL2 = numericDepAmount * 0.02;
+                                        let commL2 = numericDepAmount * 0.03;
                                         refL2.balance += commL2;
                                         refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
                                         refL2.markModified('refEarnings');
                                         await refL2.save();
-                                        sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
+                                        sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (3% Level 2 Referral Commission)!`);
 
                                         if (refL2.referredBy) {
                                             let refL3 = await User.findOne({ id: refL2.referredBy });
@@ -324,7 +338,10 @@ app.get('/admin/dashboard', async (req, res) => {
         if (searchedUser) {
             if (searchedUser.deposits) {
                 searchedUser.deposits.forEach(d => {
-                    if (d.status === 'PAID') userTotalDeposit += parseFloat(d.amount || 0);
+                    if (d.status === 'PAID') {
+                        // Calculate Total Approved Deposit based on entered USDT amount
+                        userTotalDeposit += parseFloat(d.usdtAmount || d.amount || 0);
+                    }
                 });
             }
             if (searchedUser.withdrawals) {
@@ -425,7 +442,8 @@ app.get('/admin/dashboard', async (req, res) => {
                 `}
             </div>
             <div class="card">
-                <h3>📢 Broadcast Message to All Users</h3>
+                <h3>📢 Broadcast Message with Photo to All Users</h3>
+                <input type="text" id="bc-photo" placeholder="Enter Direct Image URL (Optional)" style="margin-bottom:10px;">
                 <textarea id="bc-msg" placeholder="Write message to send to all bot users..."></textarea>
                 <button class="btn" style="margin-top:10px; width:100%;" onclick="sendBroadcast()">Send Broadcast Message</button>
             </div>
@@ -454,11 +472,12 @@ app.get('/admin/dashboard', async (req, res) => {
                 }
                 async function sendBroadcast() {
                     let message = document.getElementById('bc-msg').value;
-                    if(!message) return alert("Type message!");
+                    let photoUrl = document.getElementById('bc-photo').value;
+                    if(!message && !photoUrl) return alert("Please enter message or photo URL!");
                     let res = await fetch('/admin/broadcast', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ message, adminKey: '${ADMIN_ID}' })
+                        body: JSON.stringify({ message, photoUrl, adminKey: '${ADMIN_ID}' })
                     });
                     let data = await res.json();
                     alert(data.message);
@@ -481,7 +500,7 @@ app.post('/admin/action', async (req, res) => {
 
     if (action === 'approve') {
         if (reqDoc.type === 'deposit' && u) {
-            let numericDepAmount = parseFloat(reqDoc.amount) || 1;
+            let numericDepAmount = reqDoc.usdtAmount || parseFloat(reqDoc.amount) || 1;
             u.ghs += numericDepAmount;
             
             let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
@@ -507,12 +526,12 @@ app.post('/admin/action', async (req, res) => {
                     if (refL1.referredBy) {
                         let refL2 = await User.findOne({ id: refL1.referredBy });
                         if (refL2) {
-                            let commL2 = numericDepAmount * 0.02;
+                            let commL2 = numericDepAmount * 0.03;
                             refL2.balance += commL2;
                             refL2.refEarnings.level2 = (refL2.refEarnings.level2 || 0) + commL2;
                             refL2.markModified('refEarnings');
                             await refL2.save();
-                            sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (2% Level 2 Referral Commission)!`);
+                            sendTelegramMessage(refL2.id, `🎁 Received +${commL2.toFixed(4)} USDT (3% Level 2 Referral Commission)!`);
 
                             if (refL2.referredBy) {
                                 let refL3 = await User.findOne({ id: refL2.referredBy });
@@ -594,13 +613,17 @@ app.post('/admin/manage-balance', async (req, res) => {
 });
 
 app.post('/admin/broadcast', async (req, res) => {
-    const { message, adminKey } = req.body;
+    const { message, photoUrl, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
 
     const users = await User.find({});
     let count = 0;
     for (let u of users) {
-        await sendTelegramMessage(u.id, message);
+        if (photoUrl && photoUrl.trim() !== '') {
+            await sendTelegramPhoto(u.id, photoUrl.trim(), message || '');
+        } else if (message && message.trim() !== '') {
+            await sendTelegramMessage(u.id, message);
+        }
         count++;
     }
     res.json({ success: true, message: `Broadcast sent to ${count} users successfully!` });
@@ -639,15 +662,18 @@ app.post('/api/deposit', async (req, res) => {
         return res.status(400).json({ success: false, message: "Invalid deposit data." });
     }
 
+    // Extract exact entered USDT amount (e.g. 1 USDT)
+    let usdtVal = parseFloat(amount) || 1;
+
     let u = await User.findOne({ id: userId });
     if (!u) u = new User({ id: userId, username: username || 'User' });
 
     const reqId = 'dep_' + Date.now();
     
-    // Save exact coin name and calculated coin amount in user deposit history
     u.deposits.unshift({ 
         id: reqId, 
-        amount: amount, // e.g., "3.03 TRX"
+        amount: amount, 
+        usdtAmount: usdtVal,
         coin: coin || 'USDT', 
         txHash, 
         status: 'PENDING', 
@@ -656,12 +682,12 @@ app.post('/api/deposit', async (req, res) => {
     u.markModified('deposits');
     await u.save();
 
-    // Save exact coin amount and name in PendingRequest for Admin panel & telegram notification
     await PendingRequest.create({ 
         reqId, 
         type: 'deposit', 
         userId, 
-        amount: amount, // e.g., "3.03 TRX"
+        amount: amount, 
+        usdtAmount: usdtVal,
         coin: coin || 'USDT',
         txHash, 
         status: 'PENDING' 
