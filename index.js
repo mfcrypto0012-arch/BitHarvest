@@ -196,8 +196,8 @@ async function handleWebhookLogic(req, res) {
 
                 if (isApprove) {
                     if (reqDoc.type === 'deposit' && u) {
-                        // Strictly use entered USDT amount for GHS and Commissions
-                        let numericDepAmount = reqDoc.usdtAmount || parseFloat(reqDoc.amount) || 1;
+                        // Strictly use entered usdtAmount for GHS and Commission calculation
+                        let numericDepAmount = reqDoc.usdtAmount ? Number(reqDoc.usdtAmount) : 1;
                         u.ghs += numericDepAmount;
 
                         let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
@@ -210,7 +210,7 @@ async function handleWebhookLogic(req, res) {
                         u.markModified('deposits');
                         await u.save();
 
-                        // Multi-level Referral Commission based on entered USDT amount (Level 1: 15%, Level 2: 3%, Level 3: 1%)
+                        // Multi-level Referral Commission based strictly on entered usdtAmount (Level 1: 15%, Level 2: 3%, Level 3: 1%)
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
@@ -339,7 +339,7 @@ app.get('/admin/dashboard', async (req, res) => {
             if (searchedUser.deposits) {
                 searchedUser.deposits.forEach(d => {
                     if (d.status === 'PAID') {
-                        userTotalDeposit += parseFloat(d.usdtAmount || d.amount || 0);
+                        userTotalDeposit += parseFloat(d.usdtAmount || 1);
                     }
                 });
             }
@@ -499,7 +499,7 @@ app.post('/admin/action', async (req, res) => {
 
     if (action === 'approve') {
         if (reqDoc.type === 'deposit' && u) {
-            let numericDepAmount = reqDoc.usdtAmount || parseFloat(reqDoc.amount) || 1;
+            let numericDepAmount = reqDoc.usdtAmount ? Number(reqDoc.usdtAmount) : 1;
             u.ghs += numericDepAmount;
             
             let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
@@ -661,7 +661,7 @@ app.post('/api/deposit', async (req, res) => {
         return res.status(400).json({ success: false, message: "Invalid deposit data." });
     }
 
-    let exactUsdtVal = parseFloat(usdtAmount) || parseFloat(amount) || 1;
+    let exactUsdtVal = Number(usdtAmount) || 1;
 
     let u = await User.findOne({ id: userId });
     if (!u) u = new User({ id: userId, username: username || 'User' });
