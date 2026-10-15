@@ -746,7 +746,7 @@ app.post('/api/deposit', async (req, res) => {
         coin: coin || 'USDT', 
         txHash, 
         status: 'PENDING', 
-        date: new Date().toLocaleDateString() 
+        date: new Date().toISOString() 
     });
     u.markModified('deposits');
     await u.save();
@@ -789,7 +789,16 @@ app.post('/api/withdraw', async (req, res) => {
     u.balance -= amt;
 
     const reqId = 'wd_' + Date.now();
-    u.withdrawals.unshift({ id: reqId, amount: amt, address, status: 'PENDING', date: new Date().toLocaleDateString() });
+    
+    // Fixed: Added id and correct date format so frontend list updates smoothly
+    u.withdrawals.unshift({ 
+        id: reqId, 
+        amount: amt, 
+        address, 
+        status: 'PENDING', 
+        date: new Date().toISOString() 
+    });
+    
     u.markModified('withdrawals');
     await u.save();
 
