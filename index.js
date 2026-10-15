@@ -196,6 +196,7 @@ async function handleWebhookLogic(req, res) {
 
                 if (isApprove) {
                     if (reqDoc.type === 'deposit' && u) {
+                        // Strictly use entered usdtAmount for GHS and Commission calculation
                         let numericDepAmount = reqDoc.usdtAmount ? Number(reqDoc.usdtAmount) : 1;
                         u.ghs += numericDepAmount;
 
@@ -209,6 +210,7 @@ async function handleWebhookLogic(req, res) {
                         u.markModified('deposits');
                         await u.save();
 
+                        // Multi-level Referral Commission based strictly on entered usdtAmount (Level 1: 15%, Level 2: 3%, Level 3: 1%)
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
@@ -673,7 +675,7 @@ app.post('/api/deposit', async (req, res) => {
         coin: coin || 'USDT', 
         txHash, 
         status: 'PENDING', 
-        date: new Date().toISOString() 
+        date: new Date().toLocaleDateString() 
     });
     u.markModified('deposits');
     await u.save();
@@ -716,16 +718,7 @@ app.post('/api/withdraw', async (req, res) => {
     u.balance -= amt;
 
     const reqId = 'wd_' + Date.now();
-    
-    // Fixed: Added id and ISO date format so frontend can parse and display history accurately
-    u.withdrawals.unshift({ 
-        id: reqId, 
-        amount: amt, 
-        address: address, 
-        status: 'PENDING', 
-        date: new Date().toISOString() 
-    });
-    
+    u.withdrawals.unshift({ id: reqId, amount: amt, address, status: 'PENDING', date: new Date().toLocaleDateString() });
     u.markModified('withdrawals');
     await u.save();
 
