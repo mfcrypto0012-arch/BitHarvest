@@ -421,10 +421,8 @@ app.get('/admin/dashboard', async (req, res) => {
                             <input type="number" id="mod-amt" placeholder="Enter USDT amount" style="flex:1; min-width:140px;">
                             <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">+ Add Bal</button>
                             <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">- Cut Bal</button>
-                            ${searchedUser.isBanned ? 
-                                `<button class="btn btn-green" onclick="toggleBan('${searchedUser.id}', 'unban')">✅ Unban User</button>` : 
-                                `<button class="btn btn-red" onclick="toggleBan('${searchedUser.id}', 'ban')">🚫 Ban User</button>`
-                            }
+                            <button class="btn btn-red" onclick="toggleBan('${searchedUser.id}', 'ban')">🚫 Ban User</button>
+                            <button class="btn btn-green" onclick="toggleBan('${searchedUser.id}', 'unban')">✅ Unban User</button>
                         </div>
                         <hr style="border-color:#292524; margin:12px 0;">
                         <b>✉️ Send Personal Message to this User:</b>
