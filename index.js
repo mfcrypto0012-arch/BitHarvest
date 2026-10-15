@@ -18,7 +18,6 @@ const userSchema = new mongoose.Schema({
     lastClaimTime: { type: Number, default: Date.now },
     deposits: { type: Array, default: [] },
     withdrawals: { type: Array, default: [] },
-    isBanned: { type: Boolean, default: false },
     referredBy: { type: String, default: null },
     referrals: {
         level1: { type: [String], default: [] },
@@ -120,12 +119,6 @@ async function handleWebhookLogic(req, res) {
             const chatId = String(msg.chat.id);
             const text = msg.text || '';
 
-            let user = await User.findOne({ id: chatId });
-            if (user && user.isBanned) {
-                await sendTelegramMessage(chatId, "⚠️ *Access Denied:* Your account has been banned by the admin.");
-                return;
-            }
-
             if (text.startsWith('/start')) {
                 let referrerId = null;
                 const match = text.match(/\/start\s+(\d+)/);
@@ -133,6 +126,7 @@ async function handleWebhookLogic(req, res) {
                     referrerId = String(match[1]).trim();
                 }
 
+                let user = await User.findOne({ id: chatId });
                 let isNewUser = false;
 
                 if (!user) {
@@ -409,26 +403,17 @@ app.get('/admin/dashboard', async (req, res) => {
                     <div class="user-details-box">
                         <p>👤 <b>User Name:</b> @${searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
                         <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
-                        <p>🚫 <b>Status:</b> ${searchedUser.isBanned ? '<span style="color:#ef4444; font-weight:bold;">BANNED</span>' : '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>'}</p>
                         <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
                         <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span></p>
                         <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
                         <p>🎁 <b>Total Referral Commission:</b> <span style="color:#fbbf24; font-weight:bold;">${totalRefEarn.toFixed(4)} USDT</span></p>
                         <p>🔗 <b>Referred By ID:</b> ${searchedUser.referredBy || 'Direct Join'}</p>
                         <hr style="border-color:#292524; margin:12px 0;">
-                        <b>⚙️ Manage User:</b>
-                        <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
-                            <input type="number" id="mod-amt" placeholder="Enter USDT amount" style="flex:1; min-width:140px;">
-                            <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">+ Add Bal</button>
-                            <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">- Cut Bal</button>
-                            <button class="btn btn-red" onclick="toggleBan('${searchedUser.id}', 'ban')">🚫 Ban User</button>
-                            <button class="btn btn-green" onclick="toggleBan('${searchedUser.id}', 'unban')">✅ Unban User</button>
-                        </div>
-                        <hr style="border-color:#292524; margin:12px 0;">
-                        <b>✉️ Send Personal Message to this User:</b>
+                        <b>⚙️ Manage User Balance:</b>
                         <div style="display:flex; gap:10px; margin-top:8px;">
-                            <input type="text" id="single-msg" placeholder="Type message for this user..." style="flex:1;">
-                            <button class="btn" onclick="sendSingleMsg('${searchedUser.id}')">Send Msg</button>
+                            <input type="number" id="mod-amt" placeholder="Enter USDT amount">
+                            <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">+ Add</button>
+                            <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">- Cut</button>
                         </div>
                     </div>
                 ` : searchId ? `<p style="color:#ef4444; font-size:12px;">User not found!</p>` : ''}
@@ -481,28 +466,6 @@ app.get('/admin/dashboard', async (req, res) => {
                     let data = await res.json();
                     alert(data.message);
                     location.reload();
-                }
-                async function toggleBan(userId, action) {
-                    let res = await fetch('/admin/ban-user', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ userId, action, adminKey: '${ADMIN_ID}' })
-                    });
-                    let data = await res.json();
-                    alert(data.message);
-                    location.reload();
-                }
-                async function sendSingleMsg(userId) {
-                    let message = document.getElementById('single-msg').value;
-                    if(!message) return alert("Enter message!");
-                    let res = await fetch('/admin/send-single', {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ userId, message, adminKey: '${ADMIN_ID}' })
-                    });
-                    let data = await res.json();
-                    alert(data.message);
-                    document.getElementById('single-msg').value = '';
                 }
                 async function sendBroadcast() {
                     let message = document.getElementById('bc-msg').value;
@@ -646,37 +609,6 @@ app.post('/admin/manage-balance', async (req, res) => {
     res.json({ success: true, message: `Successfully ${action}ed ${amt} USDT for user${userId}!` });
 });
 
-app.post('/admin/ban-user', async (req, res) => {
-    const { userId, action, adminKey } = req.body;
-    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
-    let u = await User.findOne({ id: userId });
-    if (!u) return res.status(404).json({ success: false, message: "User not found!" });
-
-    if (action === 'ban') {
-        u.isBanned = true;
-        await u.save();
-        sendTelegramMessage(userId, `🚫 *Account Banned:* You have been banned by the admin.`);
-        res.json({ success: true, message: `User ${userId} has been banned successfully!` });
-    } else {
-        u.isBanned = false;
-        await u.save();
-        sendTelegramMessage(userId, `✅ *Account Unbanned:* Your account has been unbanned by the admin.`);
-        res.json({ success: true, message: `User ${userId} has been unbanned successfully!` });
-    }
-});
-
-app.post('/admin/send-single', async (req, res) => {
-    const { userId, message, adminKey } = req.body;
-    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
-    let u = await User.findOne({ id: userId });
-    if (!u) return res.status(404).json({ success: false, message: "User not found!" });
-
-    await sendTelegramMessage(userId, `📩 *Message from Admin:*\n\n${message}`);
-    res.json({ success: true, message: `Message sent to user ${userId} successfully!` });
-});
-
 app.post('/admin/broadcast', async (req, res) => {
     const { message, photoUrl, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -697,11 +629,6 @@ app.post('/admin/broadcast', async (req, res) => {
 app.get('/api/user/:userId', async (req, res) => {
     const userId = req.params.userId;
     let user = await User.findOne({ id: userId });
-    
-    if (user && user.isBanned) {
-        return res.status(403).json({ success: false, message: "Your account is banned by admin." });
-    }
-
     if (!user) {
         user = new User({ id: userId, username: 'User' });
         await user.save();
@@ -712,7 +639,7 @@ app.get('/api/user/:userId', async (req, res) => {
 app.post('/api/claim', async (req, res) => {
     const { userId } = req.body;
     const u = await User.findOne({ id: userId });
-    if (!u || u.isBanned) return res.status(400).json({ success: false, message: "User not found or banned" });
+    if (!u) return res.status(400).json({ success: false, message: "User not found" });
 
     let dailyProfit = u.ghs > 0 ? u.ghs * 0.3 : 0.01;
     let perSecondRate = dailyProfit / 86400;
@@ -732,11 +659,11 @@ app.post('/api/deposit', async (req, res) => {
         return res.status(400).json({ success: false, message: "Invalid deposit data." });
     }
 
+    let exactUsdtVal = Number(usdtAmount) || 1;
+
     let u = await User.findOne({ id: userId });
-    if (u && u.isBanned) return res.status(403).json({ success: false, message: "Your account is banned." });
     if (!u) u = new User({ id: userId, username: username || 'User' });
 
-    let exactUsdtVal = Number(usdtAmount) || 1;
     const reqId = 'dep_' + Date.now();
     
     u.deposits.unshift({ 
@@ -782,19 +709,19 @@ app.post('/api/withdraw', async (req, res) => {
     if (!userId || !amt || !address) return res.status(400).json({ success: false, message: "Missing data" });
 
     let u = await User.findOne({ id: userId });
-    if (!u || u.isBanned || u.balance < amt) {
-        return res.status(400).json({ success: false, message: "Insufficient balance or account restricted" });
+    if (!u || u.balance < amt) {
+        return res.status(400).json({ success: false, message: "Insufficient balance" });
     }
 
     u.balance -= amt;
 
     const reqId = 'wd_' + Date.now();
     
-    // Fixed: Added id and correct date format so frontend list updates smoothly
+    // Fixed: Added id and ISO date format so frontend can parse and display history accurately
     u.withdrawals.unshift({ 
         id: reqId, 
         amount: amt, 
-        address, 
+        address: address, 
         status: 'PENDING', 
         date: new Date().toISOString() 
     });
