@@ -177,13 +177,14 @@ async function handleWebhookLogic(req, res) {
                     }
                 }
 
-                const renderAppUrl = process.env.RENDER_EXTERNAL_URL || "https://dashboard.render.com";
+                // Vercel Frontend WebApp Link set here
+                const vercelAppUrl = "https://nbx-cloud-miner-p1xc.vercel.app";
                 const welcomeCaption = `🎁 *Welcome to NBX Mining!*\n\nReady to grow your portfolio?\n\n✅ Earn USDT\n✅ Invite Friends\n✅ Instant Payouts\n\n🚀 *Launch the App to begin your journey!*`;
                 const startPhotoUrl = "https://ibb.co/ymZ191Fr";
                 
                 const webAppMarkup = {
                     inline_keyboard: [[
-                        { text: "⛏️ Open NBX Mining", web_app: { url: renderAppUrl } }
+                        { text: "⛏️ Open NBX Mining", web_app: { url: vercelAppUrl } }
                     ]]
                 };
 
@@ -349,7 +350,7 @@ app.get('/admin/dashboard', async (req, res) => {
     let searchedUser = null;
     let userTotalDeposit = 0;
     let userTotalWithdraw = 0;
-    let userPaidWithdrawCount = 0; // Count of successful paid withdrawals
+    let userPaidWithdrawCount = 0;
     let totalRefEarn = 0;
 
     if (searchId) {
@@ -664,7 +665,7 @@ app.post('/admin/manage-balance', async (req, res) => {
         sendTelegramMessage(userId, `⚠️ Admin deducted -${amt} USDT from your balance.`);
     }
     await u.save();
-    res.json({ success: true, message: `Successfully ${action}ed ${amt} USDT for user${userId}!` });
+    res.json({ success: true, message: `Successfully ${action}ed ${amt} USDT for user ${userId}!` });
 });
 
 app.post('/admin/ban-user', async (req, res) => {
