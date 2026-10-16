@@ -320,9 +320,9 @@ app.post(`/api/webhook/${BOT_TOKEN}`, handleWebhookLogic);
 app.post('/webhook', handleWebhookLogic);
 app.post('/api/webhook/*', handleWebhookLogic);
 
-// ROOT ROUTE FIX FOR "Cannot GET /"
+// ROOT ROUTE
 app.get('/', (req, res) => {
-    res.send(`<h1>NBX Mining App Backend Service is Active</h1><p>Open this WebApp from Telegram Bot.</p>`);
+    res.send(`<h1>NBX Mining Backend Active</h1><p>Please launch via Telegram Bot.</p>`);
 });
 
 app.get('/admin/dashboard', async (req, res) => {
@@ -349,7 +349,7 @@ app.get('/admin/dashboard', async (req, res) => {
     let searchedUser = null;
     let userTotalDeposit = 0;
     let userTotalWithdraw = 0;
-    let userPaidWithdrawCount = 0;
+    let userPaidWithdrawCount = 0; // Count of successful paid withdrawals
     let totalRefEarn = 0;
 
     if (searchId) {
