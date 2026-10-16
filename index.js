@@ -18,7 +18,7 @@ const userSchema = new mongoose.Schema({
     lastClaimTime: { type: Number, default: Date.now },
     deposits: { type: Array, default: [] },
     withdrawals: { type: Array, default: [] },
-    isBanned: { type: Boolean, default: false }, // Added for Ban/Unban system
+    isBanned: { type: Boolean, default: false },
     referredBy: { type: String, default: null },
     referrals: {
         level1: { type: [String], default: [] },
@@ -70,9 +70,10 @@ async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     }
 }
 
-async function sendTelegramPhoto(chatId, photoUrl, caption = '') {
+async function sendTelegramPhoto(chatId, photoUrl, caption = '', replyMarkup = null) {
     try {
         let body = { chat_id: chatId, photo: photoUrl, caption: caption, parse_mode: 'Markdown' };
+        if (replyMarkup) body.reply_markup = replyMarkup;
         await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -176,7 +177,18 @@ async function handleWebhookLogic(req, res) {
                     }
                 }
 
-                await sendTelegramMessage(chatId, "🚀 **Welcome to NBX Mining USDT Mining Mini App!**\n\nClick the WebApp button below to launch.");
+                const renderAppUrl = process.env.RENDER_EXTERNAL_URL || "https://dashboard.render.com";
+                const welcomeCaption = `🎁 *Welcome to NBX Mining!*\n\nReady to grow your portfolio?\n\n✅ Earn USDT\n✅ Invite Friends\n✅ Instant Payouts\n\n🚀 *Launch the App to begin your journey!*`;
+                const startPhotoUrl = "https://ibb.co/ymZ191Fr"; // Aapka diya hua image link[span_6](start_span)[span_6](end_span)
+                
+                const webAppMarkup = {
+                    inline_keyboard: [[
+                        { text: "⛏️ Open NBX Mining", web_app: { url: renderAppUrl } }
+                    ]]
+                };
+
+                await sendTelegramPhoto(chatId, startPhotoUrl, welcomeCaption, webAppMarkup);
+
             } else if (text === '/admin' && chatId === String(ADMIN_ID)) {
                 const renderAppUrl = process.env.RENDER_EXTERNAL_URL || "https://dashboard.render.com";
                 await sendTelegramMessage(chatId, `👑 **NBX Mining Admin Access**\n\nClick below to open Admin Dashboard:`, {
@@ -332,6 +344,7 @@ app.get('/admin/dashboard', async (req, res) => {
     let searchedUser = null;
     let userTotalDeposit = 0;
     let userTotalWithdraw = 0;
+    let userPaidWithdrawCount = 0; // Added for counting total paid withdraw numbers
     let totalRefEarn = 0;
 
     if (searchId) {
@@ -349,7 +362,10 @@ app.get('/admin/dashboard', async (req, res) => {
             }
             if (searchedUser.withdrawals) {
                 searchedUser.withdrawals.forEach(w => {
-                    if (w.status === 'PAID') userTotalWithdraw += parseFloat(w.amount || 0);
+                    if (w.status === 'PAID') {
+                        userTotalWithdraw += parseFloat(w.amount || 0);
+                        userPaidWithdrawCount++; // Increment count for each paid withdrawal
+                    }
                 });
             }
             let l1Earn = searchedUser.refEarnings?.level1 || 0;
@@ -411,7 +427,7 @@ app.get('/admin/dashboard', async (req, res) => {
                         <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
                         <p>🚫 <b>Status:</b> ${searchedUser.isBanned ? '<span style="color:#ef4444; font-weight:bold;">BANNED</span>' : '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>'}</p>
                         <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
-                        <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span></p>
+                        <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span> (<span style="color:#38bdf8;">${userPaidWithdrawCount} Times Paid</span>)</p>
                         <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
                         <p>🎁 <b>Total Referral Commission:</b> <span style="color:#fbbf24; font-weight:bold;">${totalRefEarn.toFixed(4)} USDT</span></p>
                         <p>🔗 <b>Referred By ID:</b> ${searchedUser.referredBy || 'Direct Join'}</p>
@@ -646,7 +662,6 @@ app.post('/admin/manage-balance', async (req, res) => {
     res.json({ success: true, message: `Successfully ${action}ed ${amt} USDT for user${userId}!` });
 });
 
-// Added Ban / Unban Admin Route
 app.post('/admin/ban-user', async (req, res) => {
     const { userId, action, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -667,7 +682,6 @@ app.post('/admin/ban-user', async (req, res) => {
     }
 });
 
-// Added Single User Message Admin Route
 app.post('/admin/send-single', async (req, res) => {
     const { userId, message, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
