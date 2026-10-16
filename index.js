@@ -179,7 +179,7 @@ async function handleWebhookLogic(req, res) {
 
                 const renderAppUrl = process.env.RENDER_EXTERNAL_URL || "https://dashboard.render.com";
                 const welcomeCaption = `🎁 *Welcome to NBX Mining!*\n\nReady to grow your portfolio?\n\n✅ Earn USDT\n✅ Invite Friends\n✅ Instant Payouts\n\n🚀 *Launch the App to begin your journey!*`;
-                const startPhotoUrl = "https://ibb.co/ymZ191Fr"; // Aapka diya hua image link[span_6](start_span)[span_6](end_span)
+                const startPhotoUrl = "https://ibb.co/ymZ191Fr";
                 
                 const webAppMarkup = {
                     inline_keyboard: [[
@@ -320,6 +320,11 @@ app.post(`/api/webhook/${BOT_TOKEN}`, handleWebhookLogic);
 app.post('/webhook', handleWebhookLogic);
 app.post('/api/webhook/*', handleWebhookLogic);
 
+// ROOT ROUTE FIX FOR "Cannot GET /"
+app.get('/', (req, res) => {
+    res.send(`<h1>NBX Mining App Backend Service is Active</h1><p>Open this WebApp from Telegram Bot.</p>`);
+});
+
 app.get('/admin/dashboard', async (req, res) => {
     const adminKey = req.query.key;
     if (adminKey !== ADMIN_ID) {
@@ -344,7 +349,7 @@ app.get('/admin/dashboard', async (req, res) => {
     let searchedUser = null;
     let userTotalDeposit = 0;
     let userTotalWithdraw = 0;
-    let userPaidWithdrawCount = 0; // Added for counting total paid withdraw numbers
+    let userPaidWithdrawCount = 0;
     let totalRefEarn = 0;
 
     if (searchId) {
@@ -364,7 +369,7 @@ app.get('/admin/dashboard', async (req, res) => {
                 searchedUser.withdrawals.forEach(w => {
                     if (w.status === 'PAID') {
                         userTotalWithdraw += parseFloat(w.amount || 0);
-                        userPaidWithdrawCount++; // Increment count for each paid withdrawal
+                        userPaidWithdrawCount++;
                     }
                 });
             }
