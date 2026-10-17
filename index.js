@@ -145,7 +145,6 @@ async function handleWebhookLogic(req, res) {
                     });
                     await user.save();
                 } else {
-                    // Update username if available
                     let currentUsername = msg.from.username ? `@${msg.from.username}` : (msg.from.first_name || 'User');
                     if (user.username !== currentUsername) {
                         user.username = currentUsername;
@@ -357,16 +356,20 @@ app.get('/admin/dashboard', async (req, res) => {
 
     allUsers.forEach(u => {
         let hasDeposited = false;
+        let userActualDepositSum = 0;
+        
         if (u.deposits) {
             u.deposits.forEach(d => {
                 if (d.status === 'PAID') {
-                    totalGlobalDeposit += parseFloat(d.usdtAmount || 1);
+                    let depUsdtVal = parseFloat(d.usdtAmount || 1);
+                    userActualDepositSum += depUsdtVal;
+                    totalGlobalDeposit += depUsdtVal;
                     hasDeposited = true;
                 }
             });
         }
 
-        // Active plan users jinki GHS > 0 ho ya deposits PAID hon
+        // Include user if they have actual paid deposits or ghs power > 0
         if (hasDeposited || (u.ghs && u.ghs > 0)) {
             activeDepositUsersCount++;
             activeDepositUsersList.push(u);
@@ -790,7 +793,6 @@ app.get('/api/user/:userId', async (req, res) => {
     res.json(user);
 });
 
-// Update GHS API endpoint to support manual or task-based updates
 app.post('/api/update-ghs', async (req, res) => {
     const { userId, ghs } = req.body;
     let u = await User.findOne({ id: userId });
@@ -830,7 +832,6 @@ app.post('/api/deposit', async (req, res) => {
     if (u && u.isBanned) return res.status(403).json({ success: false, message: "Your account is banned." });
     if (!u) u = new User({ id: userId, username: username || 'User' });
 
-    // Update username if provided
     if (username && username !== 'User') {
         u.username = username;
     }
@@ -878,7 +879,7 @@ app.post('/api/deposit', async (req, res) => {
 app.post('/api/withdraw', async (req, res) => {
     const { userId, username, amount, address } = req.body;
     let amt = parseFloat(amount);
-    if (!userId || !amt || !address) return res.status(400).json({ success: false, message: "Missing data" });
+    if (!userId || !amt || !address) return res.status(400).json({ success: false,Manager: "Missing data" });
 
     let u = await User.findOne({ id: userId });
     if (!u || u.isBanned || u.balance < amt) {
