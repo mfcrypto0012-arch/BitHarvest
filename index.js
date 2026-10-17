@@ -140,14 +140,22 @@ async function handleWebhookLogic(req, res) {
                     isNewUser = true;
                     user = new User({
                         id: chatId,
-                        username: msg.from.username || msg.from.first_name || 'User',
+                        username: msg.from.username ? `@${msg.from.username}` : (msg.from.first_name || 'User'),
                         referredBy: (referrerId && referrerId !== chatId) ? referrerId : null
                     });
                     await user.save();
-                } else if (!user.referredBy && referrerId && referrerId !== chatId) {
-                    user.referredBy = referrerId;
-                    await user.save();
-                    isNewUser = true;
+                } else {
+                    // Update username if available
+                    let currentUsername = msg.from.username ? `@${msg.from.username}` : (msg.from.first_name || 'User');
+                    if (user.username !== currentUsername) {
+                        user.username = currentUsername;
+                        await user.save();
+                    }
+                    if (!user.referredBy && referrerId && referrerId !== chatId) {
+                        user.referredBy = referrerId;
+                        await user.save();
+                        isNewUser = true;
+                    }
                 }
 
                 if (isNewUser && user.referredBy) {
@@ -344,7 +352,6 @@ app.get('/admin/dashboard', async (req, res) => {
     let totalPaidOut = 0;
     let totalGlobalDeposit = 0;
     
-    // Total users jinho ne real deposit/plan active kiya hai
     let activeDepositUsersCount = 0;
     let activeDepositUsersList = [];
 
@@ -359,7 +366,8 @@ app.get('/admin/dashboard', async (req, res) => {
             });
         }
 
-        if (hasDeposited) {
+        // Active plan users jinki GHS > 0 ho ya deposits PAID hon
+        if (hasDeposited || (u.ghs && u.ghs > 0)) {
             activeDepositUsersCount++;
             activeDepositUsersList.push(u);
         }
@@ -458,10 +466,11 @@ app.get('/admin/dashboard', async (req, res) => {
                                     if (d.status === 'PAID') depTotal += parseFloat(d.usdtAmount || 1);
                                 });
                             }
+                            let displayUname = depUser.username ? (depUser.username.startsWith('@') ? depUser.username : '@' + depUser.username) : '@User';
                             return `
                                 <tr>
                                     <td><code>${depUser.id}</code></td>
-                                    <td>@${depUser.username}</td>
+                                    <td>${displayUname}</td>
                                     <td><b style="color:#22c55e;">${depTotal.toFixed(2)} USDT</b></td>
                                     <td><b>${depUser.ghs} GHS</b></td>
                                 </tr>
@@ -479,7 +488,7 @@ app.get('/admin/dashboard', async (req, res) => {
                 </form>
                 ${searchedUser ? `
                     <div class="user-details-box">
-                        <p>👤 <b>User Name:</b> @${searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
+                        <p>👤 <b>User Name:</b> ${searchedUser.username.startsWith('@') ? searchedUser.username : '@' + searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
                         <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
                         <p>🚫 <b>Status:</b> ${searchedUser.isBanned ? '<span style="color:#ef4444; font-weight:bold;">BANNED</span>' : '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>'}</p>
                         <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
@@ -781,6 +790,19 @@ app.get('/api/user/:userId', async (req, res) => {
     res.json(user);
 });
 
+// Update GHS API endpoint to support manual or task-based updates
+app.post('/api/update-ghs', async (req, res) => {
+    const { userId, ghs } = req.body;
+    let u = await User.findOne({ id: userId });
+    if (!u) {
+        u = new User({ id: userId, ghs: ghs });
+    } else {
+        u.ghs = ghs;
+    }
+    await u.save();
+    res.json({ success: true, ghs: u.ghs });
+});
+
 app.post('/api/claim', async (req, res) => {
     const { userId } = req.body;
     const u = await User.findOne({ id: userId });
@@ -807,6 +829,11 @@ app.post('/api/deposit', async (req, res) => {
     let u = await User.findOne({ id: userId });
     if (u && u.isBanned) return res.status(403).json({ success: false, message: "Your account is banned." });
     if (!u) u = new User({ id: userId, username: username || 'User' });
+
+    // Update username if provided
+    if (username && username !== 'User') {
+        u.username = username;
+    }
 
     let exactUsdtVal = Number(usdtAmount) || 1;
     const reqId = 'dep_' + Date.now();
@@ -856,6 +883,10 @@ app.post('/api/withdraw', async (req, res) => {
     let u = await User.findOne({ id: userId });
     if (!u || u.isBanned || u.balance < amt) {
         return res.status(400).json({ success: false, message: "Insufficient balance or account restricted" });
+    }
+
+    if (username && username !== 'User') {
+        u.username = username;
     }
 
     u.balance -= amt;
