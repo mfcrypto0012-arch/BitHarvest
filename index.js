@@ -341,9 +341,29 @@ app.get('/admin/dashboard', async (req, res) => {
     const totalUsers = await User.countDocuments();
     const allUsers = await User.find({});
 
-    let totalBalances = allUsers.reduce((sum, u) => sum + (u.balance || 0), 0);
     let totalPaidOut = 0;
+    let totalGlobalDeposit = 0;
+    
+    // Total users jinho ne real deposit/plan active kiya hai
+    let activeDepositUsersCount = 0;
+    let activeDepositUsersList = [];
+
     allUsers.forEach(u => {
+        let hasDeposited = false;
+        if (u.deposits) {
+            u.deposits.forEach(d => {
+                if (d.status === 'PAID') {
+                    totalGlobalDeposit += parseFloat(d.usdtAmount || 1);
+                    hasDeposited = true;
+                }
+            });
+        }
+
+        if (hasDeposited) {
+            activeDepositUsersCount++;
+            activeDepositUsersList.push(u);
+        }
+
         if (u.withdrawals) {
             u.withdrawals.forEach(w => {
                 if (w.status === 'PAID') totalPaidOut += parseFloat(w.amount || 0);
@@ -421,9 +441,34 @@ app.get('/admin/dashboard', async (req, res) => {
             </div>
             <div class="stats-grid">
                 <div class="stat-card"><div class="stat-title">Total Users</div><div class="stat-value">${totalUsers}</div></div>
-                <div class="stat-card"><div class="stat-title">User Balances</div><div class="stat-value">${totalBalances.toFixed(2)} USDT</div></div>
+                <div class="stat-card"><div class="stat-title">Total User Deposit</div><div class="stat-value">${totalGlobalDeposit.toFixed(2)} USDT</div></div>
+                <div class="stat-card"><div class="stat-title">Total Active Plan Users</div><div class="stat-value">${activeDepositUsersCount} Users</div></div>
                 <div class="stat-card"><div class="stat-title">Paid Out</div><div class="stat-value">${totalPaidOut.toFixed(2)} USDT</div></div>
                 <div class="stat-card"><div class="stat-title">Pending Requests</div><div class="stat-value">${requests.length}</div></div>
+            </div>
+            <div class="card">
+                <h3>👥 Users With Active Plans (Deposited Users)</h3>
+                ${activeDepositUsersList.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No users have deposited yet.</p>` : `
+                    <table>
+                        <tr><th>User ID</th><th>Username</th><th>Total Deposit</th><th>GHS Power</th></tr>
+                        ${activeDepositUsersList.map(depUser => {
+                            let depTotal = 0;
+                            if (depUser.deposits) {
+                                depUser.deposits.forEach(d => {
+                                    if (d.status === 'PAID') depTotal += parseFloat(d.usdtAmount || 1);
+                                });
+                            }
+                            return `
+                                <tr>
+                                    <td><code>${depUser.id}</code></td>
+                                    <td>@${depUser.username}</td>
+                                    <td><b style="color:#22c55e;">${depTotal.toFixed(2)} USDT</b></td>
+                                    <td><b>${depUser.ghs} GHS</b></td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </table>
+                `}
             </div>
             <div class="card">
                 <h3>🔍 Search User Details & Manage Balance</h3>
