@@ -19,6 +19,7 @@ const userSchema = new mongoose.Schema({
     deposits: { type: Array, default: [] },
     withdrawals: { type: Array, default: [] },
     isBanned: { type: Boolean, default: false },
+    planActive: { type: Boolean, default: true },
     referredBy: { type: String, default: null },
     referrals: {
         level1: { type: [String], default: [] },
@@ -188,11 +189,12 @@ async function handleWebhookLogic(req, res) {
                 const welcomeCaption = `🎁 *Welcome to NBX Mining!*\n\nReady to grow your portfolio?\n\n✅ Earn USDT\n✅ Invite Friends\n✅ Instant Payouts\n\n🚀 *Launch the App to begin your journey!*`;
                 const startPhotoUrl = "https://ibb.co/ymZ191Fr";
                 
+                // Buttons names updated here
                 const webAppMarkup = {
                     inline_keyboard: [
                         [
-                            { text: "📢 NBX Official", url: "https://t.me/bnbvaultpayments" },
-                            { text: "💬 NBX Chats", url: "https://t.me/+sN2MH1z94A9lOTFk" }
+                            { text: "📢 NBX Payments", url: "https://t.me/bnbvaultpayments" },
+                            { text: "💬 NBX Official", url: "https://t.me/+sN2MH1z94A9lOTFk" }
                         ],
                         [
                             { text: "⛏️ Open NBX Mining", web_app: { url: vercelAppUrl } }
@@ -229,6 +231,7 @@ async function handleWebhookLogic(req, res) {
                     if (reqDoc.type === 'deposit' && u) {
                         let numericDepAmount = reqDoc.usdtAmount ? Number(reqDoc.usdtAmount) : 1;
                         u.ghs += numericDepAmount;
+                        u.planActive = true;
 
                         let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
                         if (idx !== -1) {
@@ -355,7 +358,6 @@ app.get('/admin/dashboard', async (req, res) => {
     let activeDepositUsersList = [];
 
     allUsers.forEach(u => {
-        let hasDeposited = false;
         let userActualDepositSum = 0;
         
         if (u.deposits) {
@@ -364,13 +366,12 @@ app.get('/admin/dashboard', async (req, res) => {
                     let depUsdtVal = parseFloat(d.usdtAmount || 1);
                     userActualDepositSum += depUsdtVal;
                     totalGlobalDeposit += depUsdtVal;
-                    hasDeposited = true;
                 }
             });
         }
 
-        // Include user if they have actual paid deposits or ghs power > 0
-        if (hasDeposited || (u.ghs && u.ghs > 0)) {
+        // Only include users who have deposited >= $1 and plan is active
+        if (userActualDepositSum >= 1 && u.planActive !== false) {
             activeDepositUsersCount++;
             activeDepositUsersList.push(u);
         }
@@ -439,6 +440,7 @@ app.get('/admin/dashboard', async (req, res) => {
                 .btn { background: #f59e0b; color: #000; border: none; font-weight: bold; padding: 10px 18px; border-radius: 8px; cursor: pointer; }
                 .btn-green { background: #22c55e; color: #fff; }
                 .btn-red { background: #ef4444; color: #fff; }
+                .btn-blue { background: #3b82f6; color: #fff; }
                 table { width: 100%; border-collapse: collapse; margin-top: 10px; }
                 th, td { padding: 10px; text-align: left; border-bottom: 1px solid #292524; font-size: 12px; }
                 th { color: #a8a29e; }
@@ -453,13 +455,13 @@ app.get('/admin/dashboard', async (req, res) => {
             <div class="stats-grid">
                 <div class="stat-card"><div class="stat-title">Total Users</div><div class="stat-value">${totalUsers}</div></div>
                 <div class="stat-card"><div class="stat-title">Total User Deposit</div><div class="stat-value">${totalGlobalDeposit.toFixed(2)} USDT</div></div>
-                <div class="stat-card"><div class="stat-title">Total Active Plan Users</div><div class="stat-value">${activeDepositUsersCount} Users</div></div>
+                <div class="stat-card"><div class="stat-title">Total Active Plan Users ($1+)</div><div class="stat-value">${activeDepositUsersCount} Users</div></div>
                 <div class="stat-card"><div class="stat-title">Paid Out</div><div class="stat-value">${totalPaidOut.toFixed(2)} USDT</div></div>
                 <div class="stat-card"><div class="stat-title">Pending Requests</div><div class="stat-value">${requests.length}</div></div>
             </div>
             <div class="card">
-                <h3>👥 Users With Active Plans (Deposited Users)</h3>
-                ${activeDepositUsersList.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No users have deposited yet.</p>` : `
+                <h3>👥 Users With Active Plans ($1+ Deposits Only)</h3>
+                ${activeDepositUsersList.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No active plan users found.</p>` : `
                     <table>
                         <tr><th>User ID</th><th>Username</th><th>Total Deposit</th><th>GHS Power</th></tr>
                         ${activeDepositUsersList.map(depUser => {
@@ -483,7 +485,7 @@ app.get('/admin/dashboard', async (req, res) => {
                 `}
             </div>
             <div class="card">
-                <h3>🔍 Search User Details & Manage Balance</h3>
+                <h3>🔍 Search User Details & Manage Plan</h3>
                 <form method="GET" action="/admin/dashboard" class="search-box">
                     <input type="hidden" name="key" value="${ADMIN_ID}">
                     <input type="text" name="search" placeholder="Enter Telegram User ID or Username" value="${searchId}">
@@ -493,18 +495,21 @@ app.get('/admin/dashboard', async (req, res) => {
                     <div class="user-details-box">
                         <p>👤 <b>User Name:</b> ${searchedUser.username.startsWith('@') ? searchedUser.username : '@' + searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
                         <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
-                        <p>🚫 <b>Status:</b> ${searchedUser.isBanned ? '<span style="color:#ef4444; font-weight:bold;">BANNED</span>' : '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>'}</p>
+                        <p>🚫 <b>Account Status:</b> ${searchedUser.isBanned ? '<span style="color:#ef4444; font-weight:bold;">BANNED</span>' : '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>'}</p>
+                        <p>⚡ <b>Mining Plan Status:</b> ${searchedUser.planActive !== false && searchedUser.ghs > 0 ? '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>' : '<span style="color:#ef4444; font-weight:bold;">DEACTIVATED</span>'}</p>
                         <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
                         <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span> (<span style="color:#38bdf8;">${userPaidWithdrawCount} Times Paid</span>)</p>
                         <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
                         <p>🎁 <b>Total Referral Commission:</b> <span style="color:#fbbf24; font-weight:bold;">${totalRefEarn.toFixed(4)} USDT</span></p>
                         <p>🔗 <b>Referred By ID:</b> ${searchedUser.referredBy || 'Direct Join'}</p>
                         <hr style="border-color:#292524; margin:12px 0;">
-                        <b>⚙️ Manage User Balance & Status:</b>
+                        <b>⚙️ Manage User Balance, Plan & Status:</b>
                         <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
                             <input type="number" id="mod-amt" placeholder="Enter USDT amount" style="flex:1; min-width:140px;">
                             <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">+ Add</button>
                             <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">- Cut</button>
+                            <button class="btn btn-blue" onclick="togglePlan('${searchedUser.id}', 'activate')">⚡ Activate Plan</button>
+                            <button class="btn btn-red" onclick="togglePlan('${searchedUser.id}', 'deactivate')">❌ Deactivate Plan</button>
                             <button class="btn btn-red" onclick="toggleBan('${searchedUser.id}', 'ban')">🚫 Ban User</button>
                             <button class="btn btn-green" onclick="toggleBan('${searchedUser.id}', 'unban')">✅ Unban User</button>
                         </div>
@@ -566,6 +571,16 @@ app.get('/admin/dashboard', async (req, res) => {
                     alert(data.message);
                     location.reload();
                 }
+                async function togglePlan(userId, action) {
+                    let res = await fetch('/admin/manage-plan', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ userId, action, adminKey: '${ADMIN_ID}' })
+                    });
+                    let data = await res.json();
+                    alert(data.message);
+                    location.reload();
+                }
                 async function toggleBan(userId, action) {
                     let res = await fetch('/admin/ban-user', {
                         method: 'POST',
@@ -607,6 +622,29 @@ app.get('/admin/dashboard', async (req, res) => {
     res.send(html);
 });
 
+// Endpoint to manage plan activate / deactivate
+app.post('/admin/manage-plan', async (req, res) => {
+    const { userId, action, adminKey } = req.body;
+    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
+
+    let u = await User.findOne({ id: userId });
+    if (!u) return res.status(404).json({ success: false, message: "User not found!" });
+
+    if (action === 'activate') {
+        u.planActive = true;
+        if (u.ghs <= 0) u.ghs = 1;
+        await u.save();
+        sendTelegramMessage(userId, `⚡ *Plan Activated:* Admin ne aapka mining plan activate kar diya hai!`);
+        res.json({ success: true, message: `Plan activated successfully for user ${userId}!` });
+    } else {
+        u.planActive = false;
+        u.ghs = 0;
+        await u.save();
+        sendTelegramMessage(userId, `❌ *Plan Deactivated:* Admin ne aapka mining plan deactivate kar diya hai.`);
+        res.json({ success: true, message: `Plan deactivated successfully for user ${userId}!` });
+    }
+});
+
 app.post('/admin/action', async (req, res) => {
     const { reqId, action, adminKey } = req.body;
     if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
@@ -620,6 +658,7 @@ app.post('/admin/action', async (req, res) => {
         if (reqDoc.type === 'deposit' && u) {
             let numericDepAmount = reqDoc.usdtAmount ? Number(reqDoc.usdtAmount) : 1;
             u.ghs += numericDepAmount;
+            u.planActive = true;
             
             let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
             if (idx !== -1) {
@@ -808,7 +847,7 @@ app.post('/api/update-ghs', async (req, res) => {
 app.post('/api/claim', async (req, res) => {
     const { userId } = req.body;
     const u = await User.findOne({ id: userId });
-    if (!u || u.isBanned) return res.status(400).json({ success: false, message: "User not found or banned" });
+    if (!u || u.isBanned || u.planActive === false) return res.status(400).json({ success: false, message: "User not found, banned or plan deactivated" });
 
     let dailyProfit = u.ghs > 0 ? u.ghs * 0.3 : 0.01;
     let perSecondRate = dailyProfit / 86400;
@@ -879,7 +918,7 @@ app.post('/api/deposit', async (req, res) => {
 app.post('/api/withdraw', async (req, res) => {
     const { userId, username, amount, address } = req.body;
     let amt = parseFloat(amount);
-    if (!userId || !amt || !address) return res.status(400).json({ success: false,Manager: "Missing data" });
+    if (!userId || !amt || !address) return res.status(400).json({ success: false, message: "Missing data" });
 
     let u = await User.findOne({ id: userId });
     if (!u || u.isBanned || u.balance < amt) {
