@@ -1,15 +1,19 @@
 const express = require('express');
 const mongoose = require('mongoose');
+const cookieParser = require('cookie-parser');
 const app = express();
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_ID;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 
+// Set your custom Admin Credentials here
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "nbx12345"; // Change password if needed
+
 mongoose.connect(MONGO_URI)
     .then(async () => {
         console.log('✅ Connected to MongoDB Atlas Successfully!');
-        // AUTO-FIX: Sync every user's GHS power strictly with their total PAID deposits
         try {
             const allUsers = await mongoose.model('User').find({});
             for (let u of allUsers) {
@@ -21,7 +25,6 @@ mongoose.connect(MONGO_URI)
                         }
                     });
                 }
-                // Agar GHS deposit sum se match nahi karti ya ziada ho gayi hai, toh exact real deposit sum par set kar do
                 if (u.ghs !== realDepositSum) {
                     u.ghs = realDepositSum;
                     await u.save();
@@ -73,6 +76,7 @@ const PendingRequest = mongoose.model('PendingRequest', pendingRequestSchema);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
@@ -80,6 +84,20 @@ app.use((req, res, next) => {
     res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     next();
 });
+
+// Middleware to protect admin routes
+function checkAdminAuth(req, res, next) {
+    const authCookie = req.cookies.admin_auth;
+    if (authCookie === "authenticated_secret_session") {
+        return next();
+    }
+    // If URL contains admin key from bot, automatically set cookie
+    if (req.query.key && req.query.key === ADMIN_ID) {
+        res.cookie('admin_auth', 'authenticated_secret_session', { maxAge: 86400000, httpOnly: true });
+        return next();
+    }
+    res.redirect('/admin/login');
+}
 
 async function sendTelegramMessage(chatId, text, replyMarkup = null) {
     try {
@@ -263,7 +281,6 @@ async function handleWebhookLogic(req, res) {
                         }
                         u.markModified('deposits');
 
-                        // RECALCULATE GHS STRICTLY FROM ALL APPROVED DEPOSITS TO PREVENT DUPLICATES
                         let totalApprovedGhs = 0;
                         u.deposits.forEach(d => {
                             if (d.status === 'PAID') {
@@ -335,6 +352,14 @@ async function handleWebhookLogic(req, res) {
                             if (p) p.status = 'DECLINED';
                         }
                         u.markModified('deposits');
+                        
+                        let totalApprovedGhs = 0;
+                        u.deposits.forEach(d => {
+                            if (d.status === 'PAID') {
+                                totalApprovedGhs += Number(d.usdtAmount || 1);
+                            }
+                        });
+                        u.ghs = totalApprovedGhs;
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
                     } else if (reqDoc.type === 'withdraw' && u) {
@@ -372,12 +397,53 @@ app.get('/', (req, res) => {
     res.send(`<h1>NBX Mining Backend Active</h1><p>Please launch via Telegram Bot.</p>`);
 });
 
-app.get('/admin/dashboard', async (req, res) => {
-    const adminKey = req.query.key;
-    if (adminKey !== ADMIN_ID) {
-        return res.status(403).send("<h1>Unauthorized Access!</h1>");
-    }
+// ADMIN LOGIN ROUTES
+app.get('/admin/login', (req, res) => {
+    res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Admin Login - NBX Mining</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <style>
+                * { box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }
+                body { background: #0c0a09; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                .login-card { background: #1c1917; border: 1px solid #292524; padding: 30px; border-radius: 16px; width: 90%; max-width: 360px; text-align: center; }
+                h2 { color: #f59e0b; margin-bottom: 20px; }
+                input { width: 100%; padding: 12px; margin-bottom: 12px; background: #0c0a09; border: 1px solid #44403c; color: #fff; border-radius: 8px; }
+                button { width: 100%; padding: 12px; background: #f59e0b; color: #000; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; }
+            </style>
+        </head>
+        <body>
+            <div class="login-card">
+                <h2>🔐 Admin Login</h2>
+                <form action="/admin/login" method="POST">
+                    <input type="text" name="username" placeholder="Username" required>
+                    <input type="password" name="password" placeholder="Password" required>
+                    <button type="submit">Login</button>
+                </form>
+            </div>
+        </body>
+        </html>
+    `);
+});
 
+app.post('/admin/login', (req, res) => {
+    const { username, password } = req.body;
+    if (username === ADMIN_USERNAME && password === ADMIN_PASSWORD) {
+        res.cookie('admin_auth', 'authenticated_secret_session', { maxAge: 86400000, httpOnly: true });
+        return res.redirect('/admin/dashboard');
+    }
+    res.send(`<script>alert('Invalid Credentials!'); window.location.href='/admin/login';</script>`);
+});
+
+app.get('/admin/logout', (req, res) => {
+    res.clearCookie('admin_auth');
+    res.redirect('/admin/login');
+});
+
+// PROTECTED DASHBOARD
+app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
     const requests = await PendingRequest.find({});
     const totalUsers = await User.countDocuments();
     const allUsers = await User.find({});
@@ -459,6 +525,7 @@ app.get('/admin/dashboard', async (req, res) => {
                 body { background: #0c0a09; color: #f3f4f6; margin: 0; padding: 20px; }
                 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
                 .header h1 { color: #f59e0b; margin: 0; font-size: 24px; }
+                .logout-btn { background: #ef4444; color: #fff; padding: 6px 12px; border-radius: 6px; text-decoration: none; font-size: 12px; font-weight: bold; }
                 .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 25px; }
                 .stat-card { background: #1c1917; border: 1px solid #292524; border-radius: 12px; padding: 15px; text-align: left; }
                 .stat-title { font-size: 11px; color: #a8a29e; text-transform: uppercase; letter-spacing: 0.5px; }
@@ -480,7 +547,10 @@ app.get('/admin/dashboard', async (req, res) => {
         <body>
             <div class="header">
                 <h1>👑 NBX Mining Admin Panel</h1>
-                <span style="font-size: 12px; color: #22c55e;">● Live System</span>
+                <div>
+                    <span style="font-size: 12px; color: #22c55e; margin-right: 10px;">● Protected</span>
+                    <a href="/admin/logout" class="logout-btn">Logout</a>
+                </div>
             </div>
             <div class="stats-grid">
                 <div class="stat-card"><div class="stat-title">Total Users</div><div class="stat-value">${totalUsers}</div></div>
@@ -517,7 +587,6 @@ app.get('/admin/dashboard', async (req, res) => {
             <div class="card">
                 <h3>🔍 Search User Details & Manage Plan</h3>
                 <form method="GET" action="/admin/dashboard" class="search-box">
-                    <input type="hidden" name="key" value="${ADMIN_ID}">
                     <input type="text" name="search" placeholder="Enter Telegram User ID or Username" value="${searchId}">
                     <button type="submit" class="btn">Search</button>
                 </form>
@@ -583,7 +652,7 @@ app.get('/admin/dashboard', async (req, res) => {
                     let res = await fetch('/admin/action', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ reqId, action, adminKey: '${ADMIN_ID}' })
+                        body: JSON.stringify({ reqId, action })
                     });
                     let data = await res.json();
                     alert(data.message);
@@ -595,7 +664,7 @@ app.get('/admin/dashboard', async (req, res) => {
                     let res = await fetch('/admin/manage-balance', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ userId, amount, action, adminKey: '${ADMIN_ID}' })
+                        body: JSON.stringify({ userId, amount, action })
                     });
                     let data = await res.json();
                     alert(data.message);
@@ -605,7 +674,7 @@ app.get('/admin/dashboard', async (req, res) => {
                     let res = await fetch('/admin/manage-plan', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ userId, action, adminKey: '${ADMIN_ID}' })
+                        body: JSON.stringify({ userId, action })
                     });
                     let data = await res.json();
                     alert(data.message);
@@ -615,7 +684,7 @@ app.get('/admin/dashboard', async (req, res) => {
                     let res = await fetch('/admin/ban-user', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ userId, action, adminKey: '${ADMIN_ID}' })
+                        body: JSON.stringify({ userId, action })
                     });
                     let data = await res.json();
                     alert(data.message);
@@ -627,7 +696,7 @@ app.get('/admin/dashboard', async (req, res) => {
                     let res = await fetch('/admin/send-single', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ userId, message, adminKey: '${ADMIN_ID}' })
+                        body: JSON.stringify({ userId, message })
                     });
                     let data = await res.json();
                     alert(data.message);
@@ -640,7 +709,7 @@ app.get('/admin/dashboard', async (req, res) => {
                     let res = await fetch('/admin/broadcast', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ message, photoUrl, adminKey: '${ADMIN_ID}' })
+                        body: JSON.stringify({ message, photoUrl })
                     });
                     let data = await res.json();
                     alert(data.message);
@@ -652,11 +721,9 @@ app.get('/admin/dashboard', async (req, res) => {
     res.send(html);
 });
 
-// Endpoint to manage plan activate / deactivate
-app.post('/admin/manage-plan', async (req, res) => {
-    const { userId, action, adminKey } = req.body;
-    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
+// Protected Admin Action Endpoints
+app.post('/admin/manage-plan', checkAdminAuth, async (req, res) => {
+    const { userId, action } = req.body;
     let u = await User.findOne({ id: userId });
     if (!u) return res.status(404).json({ success: false, message: "User not found!" });
 
@@ -675,10 +742,8 @@ app.post('/admin/manage-plan', async (req, res) => {
     }
 });
 
-app.post('/admin/action', async (req, res) => {
-    const { reqId, action, adminKey } = req.body;
-    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
+app.post('/admin/action', checkAdminAuth, async (req, res) => {
+    const { reqId, action } = req.body;
     const reqDoc = await PendingRequest.findOne({ reqId });
     if (!reqDoc) return res.status(404).json({ success: false, message: "Request not found" });
 
@@ -697,7 +762,6 @@ app.post('/admin/action', async (req, res) => {
             }
             u.markModified('deposits');
 
-            // Recalculate exact total approved GHS
             let totalApprovedGhs = 0;
             u.deposits.forEach(d => {
                 if (d.status === 'PAID') {
@@ -768,7 +832,6 @@ app.post('/admin/action', async (req, res) => {
             }
             u.markModified('deposits');
             
-            // Recalculate GHS after decline
             let totalApprovedGhs = 0;
             u.deposits.forEach(d => {
                 if (d.status === 'PAID') {
@@ -797,10 +860,8 @@ app.post('/admin/action', async (req, res) => {
     res.json({ success: true, message: "Action executed successfully!" });
 });
 
-app.post('/admin/manage-balance', async (req, res) => {
-    const { userId, amount, action, adminKey } = req.body;
-    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
+app.post('/admin/manage-balance', checkAdminAuth, async (req, res) => {
+    const { userId, amount, action } = req.body;
     let u = await User.findOne({ id: userId });
     if (!u) return res.status(404).json({ success: false, message: "User not found!" });
 
@@ -816,10 +877,8 @@ app.post('/admin/manage-balance', async (req, res) => {
     res.json({ success: true, message: `Successfully ${action}ed ${amt} USDT for user${userId}!` });
 });
 
-app.post('/admin/ban-user', async (req, res) => {
-    const { userId, action, adminKey } = req.body;
-    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
+app.post('/admin/ban-user', checkAdminAuth, async (req, res) => {
+    const { userId, action } = req.body;
     let u = await User.findOne({ id: userId });
     if (!u) return res.status(404).json({ success: false, message: "User not found!" });
 
@@ -836,10 +895,8 @@ app.post('/admin/ban-user', async (req, res) => {
     }
 });
 
-app.post('/admin/send-single', async (req, res) => {
-    const { userId, message, adminKey } = req.body;
-    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
+app.post('/admin/send-single', checkAdminAuth, async (req, res) => {
+    const { userId, message } = req.body;
     let u = await User.findOne({ id: userId });
     if (!u) return res.status(404).json({ success: false, message: "User not found!" });
 
@@ -847,10 +904,8 @@ app.post('/admin/send-single', async (req, res) => {
     res.json({ success: true, message: `Message sent to user ${userId} successfully!` });
 });
 
-app.post('/admin/broadcast', async (req, res) => {
-    const { message, photoUrl, adminKey } = req.body;
-    if (adminKey !== ADMIN_ID) return res.status(403).json({ success: false, message: "Unauthorized" });
-
+app.post('/admin/broadcast', checkAdminAuth, async (req, res) => {
+    const { message, photoUrl } = req.body;
     const users = await User.find({});
     let count = 0;
     for (let u of users) {
@@ -885,7 +940,6 @@ app.post('/api/update-ghs', async (req, res) => {
     if (!u) {
         u = new User({ id: userId, ghs: ghs });
     } else {
-        // Prevent manual or fake overriding of GHS via frontend sync
         let realDepositSum = 0;
         if (u.deposits) {
             u.deposits.forEach(d => {
