@@ -7,7 +7,31 @@ const ADMIN_ID = process.env.ADMIN_ID;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 
 mongoose.connect(MONGO_URI)
-    .then(() => console.log('✅ Connected to MongoDB Atlas Successfully!'))
+    .then(async () => {
+        console.log('✅ Connected to MongoDB Atlas Successfully!');
+        // AUTO-FIX: Sync every user's GHS power strictly with their total PAID deposits
+        try {
+            const allUsers = await mongoose.model('User').find({});
+            for (let u of allUsers) {
+                let realDepositSum = 0;
+                if (u.deposits && Array.isArray(u.deposits)) {
+                    u.deposits.forEach(d => {
+                        if (d.status === 'PAID') {
+                            realDepositSum += Number(d.usdtAmount || 1);
+                        }
+                    });
+                }
+                // Agar GHS deposit sum se match nahi karti ya ziada ho gayi hai, toh exact real deposit sum par set kar do
+                if (u.ghs !== realDepositSum) {
+                    u.ghs = realDepositSum;
+                    await u.save();
+                }
+            }
+            console.log('✅ All users GHS powers auto-synced with approved deposits!');
+        } catch (err) {
+            console.log('Auto-sync GHS error:', err);
+        }
+    })
     .catch(err => console.error('❌ MongoDB Connection Error:', err));
 
 const userSchema = new mongoose.Schema({
@@ -189,7 +213,6 @@ async function handleWebhookLogic(req, res) {
                 const welcomeCaption = `🎁 *Welcome to NBX Mining!*\n\nReady to grow your portfolio?\n\n✅ Earn USDT\n✅ Invite Friends\n✅ Instant Payouts\n\n🚀 *Launch the App to begin your journey!*`;
                 const startPhotoUrl = "https://ibb.co/ymZ191Fr";
                 
-                // Buttons names updated here
                 const webAppMarkup = {
                     inline_keyboard: [
                         [
@@ -230,9 +253,7 @@ async function handleWebhookLogic(req, res) {
                 if (isApprove) {
                     if (reqDoc.type === 'deposit' && u) {
                         let numericDepAmount = reqDoc.usdtAmount ? Number(reqDoc.usdtAmount) : 1;
-                        u.ghs += numericDepAmount;
-                        u.planActive = true;
-
+                        
                         let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
                         if (idx !== -1) {
                             u.deposits[idx].status = 'PAID';
@@ -241,6 +262,16 @@ async function handleWebhookLogic(req, res) {
                             if (p) p.status = 'PAID';
                         }
                         u.markModified('deposits');
+
+                        // RECALCULATE GHS STRICTLY FROM ALL APPROVED DEPOSITS TO PREVENT DUPLICATES
+                        let totalApprovedGhs = 0;
+                        u.deposits.forEach(d => {
+                            if (d.status === 'PAID') {
+                                totalApprovedGhs += Number(d.usdtAmount || 1);
+                            }
+                        });
+                        u.ghs = totalApprovedGhs;
+                        u.planActive = true;
                         await u.save();
 
                         if (u.referredBy) {
@@ -370,7 +401,6 @@ app.get('/admin/dashboard', async (req, res) => {
             });
         }
 
-        // Only include users who have deposited >= $1 and plan is active
         if (userActualDepositSum >= 1 && u.planActive !== false) {
             activeDepositUsersCount++;
             activeDepositUsersList.push(u);
@@ -529,7 +559,7 @@ app.get('/admin/dashboard', async (req, res) => {
                         <tr><th>Type</th><th>User ID</th><th>Amount</th><th>Details</th><th>Action</th></tr>
                         ${requests.map(r => `
                             <tr>
-                                <td><b style="color:${r.type==='deposit'?'#22c55e':'#ef4444'}">${r.type.toUpperCase()}</b></td>
+                                <td style="color:${r.type==='deposit'?'#22c55e':'#ef4444'}; font-weight:bold;">${r.type.toUpperCase()}</td>
                                 <td>${r.userId}</td>
                                 <td><b>${r.amount}</b></td>
                                 <td>${r.txHash ? 'Tx: ' + r.txHash.substring(0,10) + '...' : 'Addr: ' + r.address.substring(0,10) + '...'}</td>
@@ -657,8 +687,6 @@ app.post('/admin/action', async (req, res) => {
     if (action === 'approve') {
         if (reqDoc.type === 'deposit' && u) {
             let numericDepAmount = reqDoc.usdtAmount ? Number(reqDoc.usdtAmount) : 1;
-            u.ghs += numericDepAmount;
-            u.planActive = true;
             
             let idx = u.deposits.findIndex(d => String(d.id) === String(reqId));
             if (idx !== -1) {
@@ -668,6 +696,16 @@ app.post('/admin/action', async (req, res) => {
                 if (p) p.status = 'PAID';
             }
             u.markModified('deposits');
+
+            // Recalculate exact total approved GHS
+            let totalApprovedGhs = 0;
+            u.deposits.forEach(d => {
+                if (d.status === 'PAID') {
+                    totalApprovedGhs += Number(d.usdtAmount || 1);
+                }
+            });
+            u.ghs = totalApprovedGhs;
+            u.planActive = true;
             await u.save();
 
             if (u.referredBy) {
@@ -729,6 +767,15 @@ app.post('/admin/action', async (req, res) => {
                 if (p) p.status = 'DECLINED';
             }
             u.markModified('deposits');
+            
+            // Recalculate GHS after decline
+            let totalApprovedGhs = 0;
+            u.deposits.forEach(d => {
+                if (d.status === 'PAID') {
+                    totalApprovedGhs += Number(d.usdtAmount || 1);
+                }
+            });
+            u.ghs = totalApprovedGhs;
             await u.save();
             sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
         } else if (reqDoc.type === 'withdraw' && u) {
@@ -838,7 +885,18 @@ app.post('/api/update-ghs', async (req, res) => {
     if (!u) {
         u = new User({ id: userId, ghs: ghs });
     } else {
-        u.ghs = ghs;
+        // Prevent manual or fake overriding of GHS via frontend sync
+        let realDepositSum = 0;
+        if (u.deposits) {
+            u.deposits.forEach(d => {
+                if (d.status === 'PAID') realDepositSum += Number(d.usdtAmount || 1);
+            });
+        }
+        if (ghs <= realDepositSum) {
+            u.ghs = ghs;
+        } else {
+            u.ghs = realDepositSum;
+        }
     }
     await u.save();
     res.json({ success: true, ghs: u.ghs });
