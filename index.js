@@ -763,7 +763,7 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                     });
                     let data = await res.json();
                     alert(data.message);
-                    document.getElementById('single-messages').value = '';
+                    document.getElementById('single-msg').value = '';
                 }
                 async function sendBroadcast() {
                     let message = document.getElementById('bc-msg').value;
@@ -1000,7 +1000,7 @@ app.get('/api/user/:userId', async (req, res) => {
     let user = await User.findOne({ id: userId });
     
     if (user && user.isBanned) {
-        return res.status(403).json({ success: false, message: "Your account is banned by admin." });
+        return res.status(403).json({ success: false, isBanned: true, message: "Your account is banned by admin." });
     }
 
     if (!user) {
@@ -1013,7 +1013,7 @@ app.get('/api/user/:userId', async (req, res) => {
 app.post('/api/update-ghs', async (req, res) => {
     const { userId, ghs } = req.body;
     let u = await User.findOne({ id: userId });
-    if (u && u.isBanned) return res.status(403).json({ success: false, message: "Your account is banned." });
+    if (u && u.isBanned) return res.status(403).json({ success: false, isBanned: true, message: "Your account is banned." });
 
     if (!u) {
         u = new User({ id: userId, ghs: ghs });
@@ -1058,7 +1058,7 @@ app.post('/api/deposit', async (req, res) => {
     }
 
     let u = await User.findOne({ id: userId });
-    if (u && u.isBanned) return res.status(403).json({ success: false, message: "Your account is banned." });
+    if (u && u.isBanned) return res.status(403).json({ success: false, isBanned: true, message: "Your account is banned." });
     if (!u) u = new User({ id: userId, username: username || 'User' });
 
     if (username && username !== 'User') {
