@@ -265,6 +265,11 @@ async function handleWebhookLogic(req, res) {
             const data = query.data;
             const messageId = query.message.message_id;
 
+            let userCheck = await User.findOne({ id: chatId });
+            if (userCheck && userCheck.isBanned) {
+                return answerCallbackQuery(query.id, "⚠️ Your account is banned!");
+            }
+
             if (data.startsWith('approve_') || data.startsWith('reject_')) {
                 if (chatId !== String(ADMIN_ID)) return answerCallbackQuery(query.id, "Unauthorized!");
 
@@ -540,10 +545,15 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
                 .header h1 { color: #f59e0b; margin: 0; font-size: 24px; }
                 .logout-btn { background: #ef4444; color: #fff; padding: 6px 12px; border-radius: 6px; text-decoration: none; font-size: 12px; font-weight: bold; }
-                .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 25px; }
+                .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 20px; }
                 .stat-card { background: #1c1917; border: 1px solid #292524; border-radius: 12px; padding: 15px; text-align: left; }
                 .stat-title { font-size: 11px; color: #a8a29e; text-transform: uppercase; letter-spacing: 0.5px; }
                 .stat-value { font-size: 20px; font-weight: bold; color: #fbbf24; margin-top: 6px; }
+                .nav-tabs { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; background: #1c1917; padding: 10px; border-radius: 12px; border: 1px solid #292524; }
+                .nav-tab { background: #292524; color: #a8a29e; padding: 8px 16px; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: bold; cursor: pointer; transition: 0.2s; }
+                .nav-tab.active { background: #f59e0b; color: #000; }
+                .tab-content { display: none; }
+                .tab-content.active { display: block; }
                 .card { background: #1c1917; border: 1px solid #292524; border-radius: 12px; padding: 18px; margin-bottom: 20px; }
                 .card h3 { color: #f59e0b; margin-top: 0; font-size: 16px; border-bottom: 1px solid #292524; padding-bottom: 8px; }
                 .search-box { display: flex; gap: 10px; margin-bottom: 15px; }
@@ -566,6 +576,7 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                     <a href="/admin/logout" class="logout-btn">Logout</a>
                 </div>
             </div>
+            
             <div class="stats-grid">
                 <div class="stat-card"><div class="stat-title">Total Users</div><div class="stat-value">${totalUsers}</div></div>
                 <div class="stat-card"><div class="stat-title">Total User Deposit</div><div class="stat-value">${totalGlobalDeposit.toFixed(2)} USDT</div></div>
@@ -573,96 +584,133 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                 <div class="stat-card"><div class="stat-title">Paid Out</div><div class="stat-value">${totalPaidOut.toFixed(2)} USDT</div></div>
                 <div class="stat-card"><div class="stat-title">Pending Requests</div><div class="stat-value">${requests.length}</div></div>
             </div>
-            <div class="card">
-                <h3>👥 Users With Active Plans ($1+ Deposits Only)</h3>
-                ${activeDepositUsersList.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No active plan users found.</p>` : `
-                    <table>
-                        <tr><th>User ID</th><th>Username</th><th>Total Deposit</th><th>GHS Power</th></tr>
-                        ${activeDepositUsersList.map(depUser => {
-                            let depTotal = 0;
-                            if (depUser.deposits) {
-                                depUser.deposits.forEach(d => {
-                                    if (d.status === 'PAID') depTotal += parseFloat(d.usdtAmount || 1);
-                                });
-                            }
-                            let displayUname = depUser.username ? (depUser.username.startsWith('@') ? depUser.username : '@' + depUser.username) : '@User';
-                            return `
+
+            <!-- TAB NAVIGATION BUTTONS -->
+            <div class="nav-tabs">
+                <div class="nav-tab active" onclick="switchTab('tab-users', this)">👥 Users & Plans</div>
+                <div class="nav-tab" onclick="switchTab('tab-search', this)">🔍 Search & Manage</div>
+                <div class="nav-tab" onclick="switchTab('tab-requests', this)">⏳ Pending Requests (${requests.length})</div>
+                <div class="nav-tab" onclick="switchTab('tab-broadcast', this)">📢 Broadcast</div>
+            </div>
+
+            <!-- TAB 1: USERS -->
+            <div id="tab-users" class="tab-content active">
+                <div class="card">
+                    <h3>👥 Users With Active Plans ($1+ Deposits Only)</h3>
+                    ${activeDepositUsersList.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No active plan users found.</p>` : `
+                        <table>
+                            <tr><th>User ID</th><th>Username</th><th>Total Deposit</th><th>GHS Power</th></tr>
+                            ${activeDepositUsersList.map(depUser => {
+                                let depTotal = 0;
+                                if (depUser.deposits) {
+                                    depUser.deposits.forEach(d => {
+                                        if (d.status === 'PAID') depTotal += parseFloat(d.usdtAmount || 1);
+                                    });
+                                }
+                                let displayUname = depUser.username ? (depUser.username.startsWith('@') ? depUser.username : '@' + depUser.username) : '@User';
+                                return `
+                                    <tr>
+                                        <td><code>${depUser.id}</code></td>
+                                        <td>${displayUname}</td>
+                                        <td><b style="color:#22c55e;">${depTotal.toFixed(2)} USDT</b></td>
+                                        <td><b>${depUser.ghs} GHS</b></td>
+                                    </tr>
+                                `;
+                            }).join('')}
+                        </table>
+                    `}
+                </div>
+            </div>
+
+            <!-- TAB 2: SEARCH & MANAGE -->
+            <div id="tab-search" class="tab-content">
+                <div class="card">
+                    <h3>🔍 Search User Details & Manage Plan</h3>
+                    <form method="GET" action="/admin/dashboard" class="search-box">
+                        <input type="text" name="search" placeholder="Enter Telegram User ID or Username" value="${searchId}">
+                        <button type="submit" class="btn">Search</button>
+                    </form>
+                    ${searchedUser ? `
+                        <div class="user-details-box">
+                            <p>👤 <b>User Name:</b> ${searchedUser.username.startsWith('@') ? searchedUser.username : '@' + searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
+                            <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
+                            <p>🚫 <b>Account Status:</b> ${searchedUser.isBanned ? '<span style="color:#ef4444; font-weight:bold;">BANNED</span>' : '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>'}</p>
+                            <p>⚡ <b>Mining Plan Status:</b> ${searchedUser.planActive !== false && searchedUser.ghs > 0 ? '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>' : '<span style="color:#ef4444; font-weight:bold;">DEACTIVATED</span>'}</p>
+                            <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
+                            <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span> (<span style="color:#38bdf8;">${userPaidWithdrawCount} Times Paid</span>)</p>
+                            <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
+                            <p>🎁 <b>Total Referral Commission:</b> <span style="color:#fbbf24; font-weight:bold;">${totalRefEarn.toFixed(4)} USDT</span></p>
+                            <p>🔗 <b>Referred By ID:</b> ${searchedUser.referredBy || 'Direct Join'}</p>
+                            <hr style="border-color:#292524; margin:12px 0;">
+                            <b>⚙️ Manage User Balance, Plan & Status:</b>
+                            <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
+                                <input type="number" id="mod-amt" placeholder="Enter USDT amount" style="flex:1; min-width:140px;">
+                                <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">+ Add</button>
+                                <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">- Cut</button>
+                                <button class="btn btn-blue" onclick="togglePlan('${searchedUser.id}', 'activate')">⚡ Activate Plan</button>
+                                <button class="btn btn-red" onclick="togglePlan('${searchedUser.id}', 'deactivate')">❌ Deactivate Plan</button>
+                                <button class="btn btn-red" onclick="toggleBan('${searchedUser.id}', 'ban')">🚫 Ban User</button>
+                                <button class="btn btn-green" onclick="toggleBan('${searchedUser.id}', 'unban')">✅ Unban User</button>
+                            </div>
+                            <hr style="border-color:#292524; margin:12px 0;">
+                            <b>✉️ Send Personal Message to this User:</b>
+                            <div style="display:flex; gap:10px; margin-top:8px;">
+                                <input type="text" id="single-msg" placeholder="Type message for this user..." style="flex:1;">
+                                <button class="btn" onclick="sendSingleMsg('${searchedUser.id}')">Send Msg</button>
+                            </div>
+                        </div>
+                    ` : searchId ? `<p style="color:#ef4444; font-size:12px;">User not found!</p>` : ''}
+                </div>
+            </div>
+
+            <!-- TAB 3: PENDING REQUESTS -->
+            <div id="tab-requests" class="tab-content">
+                <div class="card">
+                    <h3>⏳ Pending Requests</h3>
+                    ${requests.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No pending requests right now.</p>` : `
+                        <table>
+                            <tr><th>Type</th><th>User ID</th><th>Amount</th><th>Details</th><th>Action</th></tr>
+                            ${requests.map(r => `
                                 <tr>
-                                    <td><code>${depUser.id}</code></td>
-                                    <td>${displayUname}</td>
-                                    <td><b style="color:#22c55e;">${depTotal.toFixed(2)} USDT</b></td>
-                                    <td><b>${depUser.ghs} GHS</b></td>
+                                    <td style="color:${r.type==='deposit'?'#22c55e':'#ef4444'}; font-weight:bold;">${r.type.toUpperCase()}</td>
+                                    <td>${r.userId}</td>
+                                    <td><b>${r.amount}</b></td>
+                                    <td>${r.txHash ? 'Tx: ' + r.txHash.substring(0,10) + '...' : 'Addr: ' + r.address.substring(0,10) + '...'}</td>
+                                    <td>
+                                        <button class="btn btn-green" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'approve')">Approve</button>
+                                        <button class="btn btn-red" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'reject')">Reject</button>
+                                        <button class="btn btn-gray" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'close')">Close</button>
+                                    </td>
                                 </tr>
-                            `;
-                        }).join('')}
-                    </table>
-                `}
+                            `).join('')}
+                        </table>
+                    `}
+                </div>
             </div>
-            <div class="card">
-                <h3>🔍 Search User Details & Manage Plan</h3>
-                <form method="GET" action="/admin/dashboard" class="search-box">
-                    <input type="text" name="search" placeholder="Enter Telegram User ID or Username" value="${searchId}">
-                    <button type="submit" class="btn">Search</button>
-                </form>
-                ${searchedUser ? `
-                    <div class="user-details-box">
-                        <p>👤 <b>User Name:</b> ${searchedUser.username.startsWith('@') ? searchedUser.username : '@' + searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
-                        <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
-                        <p>🚫 <b>Account Status:</b> ${searchedUser.isBanned ? '<span style="color:#ef4444; font-weight:bold;">BANNED</span>' : '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>'}</p>
-                        <p>⚡ <b>Mining Plan Status:</b> ${searchedUser.planActive !== false && searchedUser.ghs > 0 ? '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>' : '<span style="color:#ef4444; font-weight:bold;">DEACTIVATED</span>'}</p>
-                        <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
-                        <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span> (<span style="color:#38bdf8;">${userPaidWithdrawCount} Times Paid</span>)</p>
-                        <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
-                        <p>🎁 <b>Total Referral Commission:</b> <span style="color:#fbbf24; font-weight:bold;">${totalRefEarn.toFixed(4)} USDT</span></p>
-                        <p>🔗 <b>Referred By ID:</b> ${searchedUser.referredBy || 'Direct Join'}</p>
-                        <hr style="border-color:#292524; margin:12px 0;">
-                        <b>⚙️ Manage User Balance, Plan & Status:</b>
-                        <div style="display:flex; gap:10px; margin-top:8px; flex-wrap:wrap;">
-                            <input type="number" id="mod-amt" placeholder="Enter USDT amount" style="flex:1; min-width:140px;">
-                            <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">+ Add</button>
-                            <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">- Cut</button>
-                            <button class="btn btn-blue" onclick="togglePlan('${searchedUser.id}', 'activate')">⚡ Activate Plan</button>
-                            <button class="btn btn-red" onclick="togglePlan('${searchedUser.id}', 'deactivate')">❌ Deactivate Plan</button>
-                            <button class="btn btn-red" onclick="toggleBan('${searchedUser.id}', 'ban')">🚫 Ban User</button>
-                            <button class="btn btn-green" onclick="toggleBan('${searchedUser.id}', 'unban')">✅ Unban User</button>
-                        </div>
-                        <hr style="border-color:#292524; margin:12px 0;">
-                        <b>✉️ Send Personal Message to this User:</b>
-                        <div style="display:flex; gap:10px; margin-top:8px;">
-                            <input type="text" id="single-msg" placeholder="Type message for this user..." style="flex:1;">
-                            <button class="btn" onclick="sendSingleMsg('${searchedUser.id}')">Send Msg</button>
-                        </div>
-                    </div>
-                ` : searchId ? `<p style="color:#ef4444; font-size:12px;">User not found!</p>` : ''}
+
+            <!-- TAB 4: BROADCAST -->
+            <div id="tab-broadcast" class="tab-content">
+                <div class="card">
+                    <h3>📢 Broadcast Message with Photo to All Users</h3>
+                    <input type="text" id="bc-photo" placeholder="Enter Direct Image URL (Optional)" style="margin-bottom:10px;">
+                    <textarea id="bc-msg" placeholder="Write message to send to all bot users..."></textarea>
+                    <button class="btn" style="margin-top:10px; width:100%;" onclick="sendBroadcast()">Send Broadcast Message</button>
+                </div>
             </div>
-            <div class="card">
-                <h3>⏳ Pending Requests</h3>
-                ${requests.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No pending requests right now.</p>` : `
-                    <table>
-                        <tr><th>Type</th><th>User ID</th><th>Amount</th><th>Details</th><th>Action</th></tr>
-                        ${requests.map(r => `
-                            <tr>
-                                <td style="color:${r.type==='deposit'?'#22c55e':'#ef4444'}; font-weight:bold;">${r.type.toUpperCase()}</td>
-                                <td>${r.userId}</td>
-                                <td><b>${r.amount}</b></td>
-                                <td>${r.txHash ? 'Tx: ' + r.txHash.substring(0,10) + '...' : 'Addr: ' + r.address.substring(0,10) + '...'}</td>
-                                <td>
-                                    <button class="btn btn-green" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'approve')">Approve</button>
-                                    <button class="btn btn-red" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'reject')">Reject</button>
-                                    <button class="btn btn-gray" style="padding:4px 8px; font-size:11px;" onclick="handleReq('${r.reqId}', 'close')">Close</button>
-                                </td>
-                            </tr>
-                        `).join('')}
-                    </table>
-                `}
-            </div>
-            <div class="card">
-                <h3>📢 Broadcast Message with Photo to All Users</h3>
-                <input type="text" id="bc-photo" placeholder="Enter Direct Image URL (Optional)" style="margin-bottom:10px;">
-                <textarea id="bc-msg" placeholder="Write message to send to all bot users..."></textarea>
-                <button class="btn" style="margin-top:10px; width:100%;" onclick="sendBroadcast()">Send Broadcast Message</button>
-            </div>
+
             <script>
+                function switchTab(tabId, el) {
+                    document.querySelectorAll('.tab-content').forEach(tc => tc.classList.remove('active'));
+                    document.querySelectorAll('.nav-tab').forEach(nt => nt.classList.remove('active'));
+                    document.getElementById(tabId).classList.add('active');
+                    el.classList.add('active');
+                }
+
+                // If search query exists, automatically open search tab
+                if('${searchId}' !== '') {
+                    switchTab('tab-search', document.querySelectorAll('.nav-tab')[1]);
+                }
+
                 async function handleReq(reqId, action) {
                     let res = await fetch('/admin/action', {
                         method: 'POST',
@@ -715,7 +763,7 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                     });
                     let data = await res.json();
                     alert(data.message);
-                    document.getElementById('single-msg').value = '';
+                    document.getElementById('single-messages').value = '';
                 }
                 async function sendBroadcast() {
                     let message = document.getElementById('bc-msg').value;
@@ -965,6 +1013,8 @@ app.get('/api/user/:userId', async (req, res) => {
 app.post('/api/update-ghs', async (req, res) => {
     const { userId, ghs } = req.body;
     let u = await User.findOne({ id: userId });
+    if (u && u.isBanned) return res.status(403).json({ success: false, message: "Your account is banned." });
+
     if (!u) {
         u = new User({ id: userId, ghs: ghs });
     } else {
