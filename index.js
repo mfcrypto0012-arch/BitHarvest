@@ -242,7 +242,7 @@ async function handleWebhookLogic(req, res) {
                 const webAppMarkup = {
                     inline_keyboard: [
                         [
-                            { text: "📢 NBX Payments", url: "https://t.me/bnbvaultpayments" },
+                            { text: "✅ NBX Payments", url: "https://t.me/bnbvaultpayments" },
                             { text: "💬 NBX Official", url: "https://t.me/+sN2MH1z94A9lOTFk" }
                         ],
                         [
