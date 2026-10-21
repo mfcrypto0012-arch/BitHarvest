@@ -235,7 +235,7 @@ async function handleWebhookLogic(req, res) {
                     }
                 }
 
-                const vercelAppUrl = "https://nbx-cloud-miner-oen6.vercel.app";
+                const vercelAppUrl = "https://nbx-cloud-miner-ue8o.vercel.app/";
                 const welcomeCaption = `🎁 *Welcome to NBX Mining!*\n\nReady to grow your portfolio?\n\n✅ Earn USDT\n✅ Invite Friends\n✅ Instant Payouts\n\n🚀 *Launch the App to begin your journey!*`;
                 const startPhotoUrl = "https://ibb.co/ymZ191Fr";
                 
@@ -246,7 +246,7 @@ async function handleWebhookLogic(req, res) {
                             { text: "💬 NBX Official", url: "https://t.me/+sN2MH1z94A9lOTFk" }
                         ],
                         [
-                            { text: "⛏️ Open NBX Mining", web_app: { url: vercelAppUrl } }
+                            { text: "🔨 ➔ Open NBX Mining ⛏️", web_app: { url: vercelAppUrl } }
                         ]
                     ]
                 };
@@ -294,7 +294,6 @@ async function handleWebhookLogic(req, res) {
                         }
                         u.markModified('deposits');
 
-                        // SIRF GHS ADD HOGA - MAIN BALANCE (WITHDRAWAL) 100% PROTECTED
                         let totalApprovedGhs = 0;
                         u.deposits.forEach(d => {
                             if (d.status === 'PAID') {
@@ -826,7 +825,6 @@ app.post('/admin/action', checkAdminAuth, async (req, res) => {
             }
             u.markModified('deposits');
 
-            // STRICT: GHS POWER MODIFIED ONLY
             let totalApprovedGhs = 0;
             u.deposits.forEach(d => {
                 if (d.status === 'PAID') {
@@ -1054,7 +1052,7 @@ app.post('/api/claim', async (req, res) => {
     res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
 });
 
-// DEPOSIT ROUTE (BALANCE PAR KOI ASAR NAHI PAREGA)
+// DEPOSIT ROUTE
 app.post('/api/deposit', async (req, res) => {
     const { userId, username, amount, usdtAmount, coin, txHash } = req.body;
     if (!userId || !amount || !txHash) {
