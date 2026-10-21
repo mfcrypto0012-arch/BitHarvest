@@ -235,7 +235,7 @@ async function handleWebhookLogic(req, res) {
                     }
                 }
 
-                const vercelAppUrl = "https://nbx-cloud-miner-p1xc.vercel.app";
+                const vercelAppUrl = "https://nbx-cloud-miner-oen6.vercel.app";
                 const welcomeCaption = `🎁 *Welcome to NBX Mining!*\n\nReady to grow your portfolio?\n\n✅ Earn USDT\n✅ Invite Friends\n✅ Instant Payouts\n\n🚀 *Launch the App to begin your journey!*`;
                 const startPhotoUrl = "https://ibb.co/ymZ191Fr";
                 
@@ -294,6 +294,7 @@ async function handleWebhookLogic(req, res) {
                         }
                         u.markModified('deposits');
 
+                        // SIRF GHS ADD HOGA - MAIN BALANCE (WITHDRAWAL) 100% PROTECTED
                         let totalApprovedGhs = 0;
                         u.deposits.forEach(d => {
                             if (d.status === 'PAID') {
@@ -304,6 +305,7 @@ async function handleWebhookLogic(req, res) {
                         u.planActive = true;
                         await u.save();
 
+                        // Referral Commission
                         if (u.referredBy) {
                             let refL1 = await User.findOne({ id: u.referredBy });
                             if (refL1) {
@@ -340,7 +342,7 @@ async function handleWebhookLogic(req, res) {
                             }
                         }
 
-                        sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!`);
+                        sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!${numericDepAmount} GHS Mining Power added.`);
                     } else if (reqDoc.type === 'withdraw' && u) {
                         let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
                         if (idx !== -1) {
@@ -461,7 +463,7 @@ app.get('/admin/logout', (req, res) => {
     res.redirect('/admin/login');
 });
 
-// PROTECTED DASHBOARD VIA STRICT COOKIE ONLY
+// PROTECTED DASHBOARD
 app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
     const requests = await PendingRequest.find({});
     const totalUsers = await User.countDocuments();
@@ -706,7 +708,6 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                     el.classList.add('active');
                 }
 
-                // If search query exists, automatically open search tab
                 if('${searchId}' !== '') {
                     switchTab('tab-search', document.querySelectorAll('.nav-tab')[1]);
                 }
@@ -825,6 +826,7 @@ app.post('/admin/action', checkAdminAuth, async (req, res) => {
             }
             u.markModified('deposits');
 
+            // STRICT: GHS POWER MODIFIED ONLY
             let totalApprovedGhs = 0;
             u.deposits.forEach(d => {
                 if (d.status === 'PAID') {
@@ -871,7 +873,7 @@ app.post('/admin/action', checkAdminAuth, async (req, res) => {
                 }
             }
 
-            sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!`);
+            sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!${numericDepAmount} GHS Mining Power added.`);
         } else if (reqDoc.type === 'withdraw' && u) {
             let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
             if (idx !== -1) {
@@ -1034,6 +1036,7 @@ app.post('/api/update-ghs', async (req, res) => {
     res.json({ success: true, ghs: u.ghs });
 });
 
+// MINING CLAIM ROUTE
 app.post('/api/claim', async (req, res) => {
     const { userId } = req.body;
     const u = await User.findOne({ id: userId });
@@ -1051,6 +1054,7 @@ app.post('/api/claim', async (req, res) => {
     res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
 });
 
+// DEPOSIT ROUTE (BALANCE PAR KOI ASAR NAHI PAREGA)
 app.post('/api/deposit', async (req, res) => {
     const { userId, username, amount, usdtAmount, coin, txHash } = req.body;
     if (!userId || !amount || !txHash) {
