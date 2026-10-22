@@ -469,7 +469,6 @@ async function handleWebhookLogic(req, res) {
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
                     } else if (reqDoc.type === 'withdraw' && u) {
-                        // Refund balance on reject
                         u.balance += parseFloat(reqDoc.amount);
                         let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
                         if (idx !== -1) {
@@ -895,7 +894,6 @@ app.post('/admin/manage-plan', checkAdminAuth, async (req, res) => {
         u.planStartDate = 0;
         u.planExpiryDate = 0;
         await u.save();
-        // UPDATED ENGLISH NOTIFICATION MESSAGE
         sendTelegramMessage(userId, `❌ *Plan Expired:* Your plan was expired plzz renew plan agin 🚀`);
         res.json({ success: true, message: `Plan deactivated successfully for user ${userId}!` });
     }
@@ -1167,11 +1165,31 @@ app.post('/api/claim', async (req, res) => {
     res.json({ success: true, balance: u.balance, lastClaimTime: u.lastClaimTime });
 });
 
-// DEPOSIT ROUTE
+// DEPOSIT ROUTE (WITH UNIQUE TXHASH SECURITY CHECK)
 app.post('/api/deposit', async (req, res) => {
     const { userId, username, amount, usdtAmount, coin, txHash } = req.body;
     if (!userId || !amount || !txHash) {
         return res.status(400).json({ success: false, message: "Invalid deposit data." });
+    }
+
+    const cleanTxHash = String(txHash).trim();
+
+    // 1️⃣ CHECK IF TXHASH ALREADY EXISTS IN PENDING REQUESTS
+    const existingPending = await PendingRequest.findOne({ txHash: cleanTxHash });
+    if (existingPending) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "This TxHash has already been submitted and is currently pending!" 
+        });
+    }
+
+    // 2️⃣ CHECK IF TXHASH ALREADY EXISTS IN ANY USER'S DEPOSIT HISTORY
+    const existingUserHash = await User.findOne({ "deposits.txHash": cleanTxHash });
+    if (existingUserHash) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "This TxHash has already been used! Please provide a new transaction hash." 
+        });
     }
 
     let u = await User.findOne({ id: userId });
@@ -1190,7 +1208,7 @@ app.post('/api/deposit', async (req, res) => {
         amount: amount, 
         usdtAmount: exactUsdtVal,
         coin: coin || 'USDT', 
-        txHash, 
+        txHash: cleanTxHash, 
         status: 'PENDING', 
         date: new Date().toLocaleDateString() 
     });
@@ -1204,12 +1222,12 @@ app.post('/api/deposit', async (req, res) => {
         amount: amount, 
         usdtAmount: exactUsdtVal,
         coin: coin || 'USDT',
-        txHash, 
+        txHash: cleanTxHash, 
         status: 'PENDING' 
     });
 
     if (ADMIN_ID) {
-        const msgText = `📥 **New Deposit Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amount}** (${exactUsdtVal} USDT)\n🪙 Coin: **${coin || 'USDT'}**\n🔑 TxHash: \`${txHash}\``;
+        const msgText = `📥 **New Deposit Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amount}** (${exactUsdtVal} USDT)\n🪙 Coin: **${coin || 'USDT'}**\n🔑 TxHash: \`${cleanTxHash}\``;
         const inlineKeyboard = {
             inline_keyboard: [[
                 { text: "✅ Approve", callback_data: `approve_${reqId}` },
