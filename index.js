@@ -16,11 +16,19 @@ mongoose.connect(MONGO_URI)
             const currentTime = Date.now();
             const allUsers = await mongoose.model('User').find({});
             for (let u of allUsers) {
-                // Auto fix missing planStartDate for existing active users
+                // Auto sync missing planStartDate from paid deposit date
                 if (u.planActive && u.ghs > 0 && (!u.planStartDate || u.planStartDate === 0)) {
-                    u.planStartDate = Date.now();
-                    u.planExpiryDate = Date.now() + (10 * 24 * 60 * 60 * 1000);
-                    await u.save();
+                    if (u.deposits && Array.isArray(u.deposits)) {
+                        const paidDep = u.deposits.find(d => d.status === 'PAID');
+                        if (paidDep && paidDep.date) {
+                            let parsedTime = Date.parse(paidDep.date);
+                            if (!isNaN(parsedTime)) {
+                                u.planStartDate = parsedTime;
+                                u.planExpiryDate = parsedTime + (10 * 24 * 60 * 60 * 1000);
+                                await u.save();
+                            }
+                        }
+                    }
                 }
 
                 // Check plan expiration
@@ -207,26 +215,33 @@ setInterval(async () => {
     }
 }, 5 * 60 * 1000);
 
-// Helper function to calculate exact days passed e.g. "1/10 Days"
+// Helper function to calculate exact days passed e.g. "3/10 Days"
 function getPlanDaysFormat(user) {
     if (!user.planActive || user.ghs <= 0) {
         return "N/A";
     }
-    
+
     let startTimestamp = user.planStartDate;
-    
-    // If old user doesn't have planStartDate, calculate fallback
+
     if (!startTimestamp || startTimestamp === 0) {
-        if (user.planExpiryDate && user.planExpiryDate > 0) {
-            startTimestamp = user.planExpiryDate - (10 * 24 * 60 * 60 * 1000);
-        } else {
-            startTimestamp = Date.now();
+        if (user.deposits && Array.isArray(user.deposits)) {
+            const paidDep = user.deposits.find(d => d.status === 'PAID');
+            if (paidDep && paidDep.date) {
+                let parsedTime = Date.parse(paidDep.date);
+                if (!isNaN(parsedTime)) {
+                    startTimestamp = parsedTime;
+                }
+            }
         }
+    }
+
+    if (!startTimestamp || startTimestamp === 0) {
+        startTimestamp = Date.now();
     }
 
     const now = Date.now();
     const elapsed = now - startTimestamp;
-    
+
     let daysPassed = Math.floor(elapsed / (1000 * 60 * 60 * 24)) + 1;
     if (daysPassed > 10) daysPassed = 10;
     if (daysPassed < 1) daysPassed = 1;
