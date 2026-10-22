@@ -204,7 +204,7 @@ setInterval(async () => {
 
             sendTelegramMessage(
                 u.id, 
-                `⏳ *Plan Expired:* Aapka 10-Day Mining Plan complete ho chuka hai aur GHS Power 0 ho gayi hai.\n\nDobara mining start karne ke liye Mini App mein ja kar deposit karein! 🚀`
+                `❌ *Plan Expired:* Your plan was expired plzz renew plan agin 🚀`
             );
         }
         if (expiredUsers.length > 0) {
@@ -391,7 +391,6 @@ async function handleWebhookLogic(req, res) {
                         u.ghs = totalApprovedGhs;
                         u.planActive = true;
                         
-                        // SET EXACT 10-DAY PLAN DURATION
                         u.planStartDate = Date.now();
                         u.planExpiryDate = Date.now() + (10 * 24 * 60 * 60 * 1000);
 
@@ -470,6 +469,7 @@ async function handleWebhookLogic(req, res) {
                         await u.save();
                         sendTelegramMessage(reqDoc.userId, `❌ Your deposit request was declined.`);
                     } else if (reqDoc.type === 'withdraw' && u) {
+                        // Refund balance on reject
                         u.balance += parseFloat(reqDoc.amount);
                         let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
                         if (idx !== -1) {
@@ -887,7 +887,7 @@ app.post('/admin/manage-plan', checkAdminAuth, async (req, res) => {
         u.planStartDate = Date.now();
         u.planExpiryDate = Date.now() + (10 * 24 * 60 * 60 * 1000); // 10 Days
         await u.save();
-        sendTelegramMessage(userId, `⚡ *Plan Activated:* Admin ne aapka mining plan 10 Days ke liye activate kar diya hai!`);
+        sendTelegramMessage(userId, `⚡ *Plan Activated:* Admin has activated your mining plan for 10 Days!`);
         res.json({ success: true, message: `Plan activated successfully for user ${userId}!` });
     } else {
         u.planActive = false;
@@ -895,7 +895,8 @@ app.post('/admin/manage-plan', checkAdminAuth, async (req, res) => {
         u.planStartDate = 0;
         u.planExpiryDate = 0;
         await u.save();
-        sendTelegramMessage(userId, `❌ *Plan Deactivated:* Admin ne aapka mining plan deactivate kar diya hai.`);
+        // UPDATED ENGLISH NOTIFICATION MESSAGE
+        sendTelegramMessage(userId, `❌ *Plan Expired:* Your plan was expired plzz renew plan agin 🚀`);
         res.json({ success: true, message: `Plan deactivated successfully for user ${userId}!` });
     }
 });
@@ -1221,28 +1222,56 @@ app.post('/api/deposit', async (req, res) => {
     res.json({ success: true, message: "Deposit request submitted successfully" });
 });
 
+// WITHDRAW ROUTE
 app.post('/api/withdraw', async (req, res) => {
     const { userId, username, amount, address } = req.body;
     let amt = parseFloat(amount);
-    if (!userId || !amt || !address) return res.status(400).json({ success: false, message: "Missing data" });
+    if (!userId || !amt || isNaN(amt) || amt <= 0 || !address) {
+        return res.status(400).json({ success: false, message: "Invalid withdrawal data" });
+    }
 
     let u = await User.findOne({ id: userId });
-    if (!u || u.isBanned || u.balance < amt) {
-        return res.status(400).json({ success: false, message: "Insufficient balance or account restricted" });
+    if (!u || u.isBanned) {
+        return res.status(403).json({ success: false, message: "Account restricted or banned" });
+    }
+
+    const existingPending = await PendingRequest.findOne({ userId: userId, type: 'withdraw', status: 'PENDING' });
+    if (existingPending) {
+        return res.status(400).json({ 
+            success: false, 
+            message: "Aapki pehle se ek withdrawal request pending hai. Pehle wo process hone dein!" 
+        });
+    }
+
+    if (u.balance < amt) {
+        return res.status(400).json({ success: false, message: "Insufficient balance for withdrawal!" });
     }
 
     if (username && username !== 'User') {
         u.username = username;
     }
 
-    u.balance -= amt;
+    u.balance = Math.max(0, u.balance - amt);
 
     const reqId = 'wd_' + Date.now();
-    u.withdrawals.unshift({ id: reqId, amount: amt, address, status: 'PENDING', date: new Date().toLocaleDateString() });
+    u.withdrawals.unshift({ 
+        id: reqId, 
+        amount: amt, 
+        address, 
+        status: 'PENDING', 
+        date: new Date().toLocaleDateString() 
+    });
     u.markModified('withdrawals');
     await u.save();
 
-    await PendingRequest.create({ reqId, type: 'withdraw', userId, amount: amt, address, status: 'PENDING' });
+    await PendingRequest.create({ 
+        reqId, 
+        type: 'withdraw', 
+        userId, 
+        amount: amt, 
+        address, 
+        status: 'PENDING' 
+    });
 
     if (ADMIN_ID) {
         const msgText = `📤 **New Withdraw Request**\n\n👤 User ID: \`${userId}\`\n💰 Amount: **${amt} USDT**\n🏦 Address: \`${address}\``;
@@ -1255,7 +1284,7 @@ app.post('/api/withdraw', async (req, res) => {
         await sendTelegramMessage(ADMIN_ID, msgText, inlineKeyboard);
     }
 
-    res.json({ success: true, message: "Withdrawal request submitted successfully" });
+    res.json({ success: true, message: "Withdrawal request submitted successfully", newBalance: u.balance });
 });
 
 const PORT = process.env.PORT || 3000;
