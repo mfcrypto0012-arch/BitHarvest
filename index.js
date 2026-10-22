@@ -17,11 +17,12 @@ mongoose.connect(MONGO_URI)
             const currentTime = Date.now();
             const allUsers = await mongoose.model('User').find({});
             for (let u of allUsers) {
-                // Check if user plan is already expired on server startup
+                // Check if user plan is already expired (10 Days completed)
                 if (u.planActive && u.planExpiryDate && u.planExpiryDate > 0 && currentTime >= u.planExpiryDate) {
                     u.ghs = 0;
                     u.planActive = false;
                     u.planExpiryDate = 0;
+                    u.planStartDate = 0;
                     await u.save();
                     continue;
                 }
@@ -39,7 +40,7 @@ mongoose.connect(MONGO_URI)
                     await u.save();
                 }
             }
-            console.log('✅ All users GHS powers & plan expiries auto-synced!');
+            console.log('✅ All users GHS powers & 10-day plan expiries auto-synced!');
         } catch (err) {
             console.log('Auto-sync GHS error:', err);
         }
@@ -56,7 +57,8 @@ const userSchema = new mongoose.Schema({
     withdrawals: { type: Array, default: [] },
     isBanned: { type: Boolean, default: false },
     planActive: { type: Boolean, default: true },
-    planExpiryDate: { type: Number, default: 0 }, // 15 Days Plan Expiry Timestamp
+    planStartDate: { type: Number, default: 0 },  // Timestamp when plan started
+    planExpiryDate: { type: Number, default: 0 },   // Timestamp for 10 Days Expiry
     referredBy: { type: String, default: null },
     referrals: {
         level1: { type: [String], default: [] },
@@ -107,7 +109,6 @@ app.use((req, res, next) => {
     next();
 });
 
-// Memory session store mapping token to user
 const activeSessions = new Set();
 
 function checkAdminAuth(req, res, next) {
@@ -172,7 +173,7 @@ async function answerCallbackQuery(callbackQueryId, text) {
     }
 }
 
-// ⏳ AUTOMATIC 15-DAY PLAN EXPIRY CHECKER (EVERY 10 MINUTES)
+// ⏳ AUTOMATIC 10-DAY PLAN EXPIRY CHECKER (EVERY 10 MINUTES)
 setInterval(async () => {
     try {
         const currentTime = Date.now();
@@ -185,11 +186,12 @@ setInterval(async () => {
             u.ghs = 0;
             u.planActive = false;
             u.planExpiryDate = 0;
+            u.planStartDate = 0;
             await u.save();
 
             sendTelegramMessage(
                 u.id, 
-                `⏳ *Plan Expired:* Aapka 15-Day Mining Plan complete ho chuka hai aur GHS Power 0 ho gayi hai.\n\nDobara mining start karne ke liye Mini App mein ja kar deposit karein! 🚀`
+                `⏳ *Plan Expired:* Aapka 10-Day Mining Plan complete ho chuka hai aur GHS Power 0 ho gayi hai.\n\nDobara mining start karne ke liye Mini App mein ja kar deposit karein! 🚀`
             );
         }
         if (expiredUsers.length > 0) {
@@ -199,6 +201,21 @@ setInterval(async () => {
         console.log("Background Plan Expiry Error:", err);
     }
 }, 10 * 60 * 1000);
+
+// Helper function to format days e.g. "5/10 Days"
+function getPlanDaysFormat(user) {
+    if (!user.planActive || !user.planStartDate || !user.planExpiryDate) {
+        return "N/A";
+    }
+    const now = Date.now();
+    const elapsed = now - user.planStartDate;
+    
+    let daysPassed = Math.floor(elapsed / (1000 * 60 * 60 * 24)) + 1;
+    if (daysPassed > 10) daysPassed = 10;
+    if (daysPassed < 1) daysPassed = 1;
+
+    return `${daysPassed}/10 Days`;
+}
 
 // Universal Webhook Handler
 async function handleWebhookLogic(req, res) {
@@ -342,8 +359,9 @@ async function handleWebhookLogic(req, res) {
                         u.ghs = totalApprovedGhs;
                         u.planActive = true;
                         
-                        // SET 15-DAY PLAN EXPIRY FROM CURRENT TIME
-                        u.planExpiryDate = Date.now() + (15 * 24 * 60 * 60 * 1000);
+                        // SET EXACT 10-DAY PLAN DURATION
+                        u.planStartDate = Date.now();
+                        u.planExpiryDate = Date.now() + (10 * 24 * 60 * 60 * 1000);
 
                         await u.save();
 
@@ -384,7 +402,7 @@ async function handleWebhookLogic(req, res) {
                             }
                         }
 
-                        sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!\n⚡ +${numericDepAmount} GHS Mining Power added (Valid for 15 Days).`);
+                        sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!\n⚡ +${numericDepAmount} GHS Mining Power added (Valid for 10 Days).`);
                     } else if (reqDoc.type === 'withdraw' && u) {
                         let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
                         if (idx !== -1) {
@@ -512,13 +530,11 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
 
     let totalPaidOut = 0;
     let totalGlobalDeposit = 0;
-    
     let activeDepositUsersCount = 0;
     let activeDepositUsersList = [];
 
     allUsers.forEach(u => {
         let userActualDepositSum = 0;
-        
         if (u.deposits) {
             u.deposits.forEach(d => {
                 if (d.status === 'PAID') {
@@ -651,14 +667,14 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                                     });
                                 }
                                 let displayUname = depUser.username ? (depUser.username.startsWith('@') ? depUser.username : '@' + depUser.username) : '@User';
-                                let expStr = depUser.planExpiryDate > 0 ? new Date(depUser.planExpiryDate).toLocaleDateString() : 'N/A';
+                                let planDaysStr = getPlanDaysFormat(depUser);
                                 return `
                                     <tr>
                                         <td><code>${depUser.id}</code></td>
                                         <td>${displayUname}</td>
                                         <td><b style="color:#22c55e;">${depTotal.toFixed(2)} USDT</b></td>
                                         <td><b>${depUser.ghs} GHS</b></td>
-                                        <td><b style="color:#fbbf24;">${expStr}</b></td>
+                                        <td><b style="color:#fbbf24;">${planDaysStr}</b></td>
                                     </tr>
                                 `;
                             }).join('')}
@@ -680,7 +696,7 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                             <p>👤 <b>User Name:</b> ${searchedUser.username.startsWith('@') ? searchedUser.username : '@' + searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
                             <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
                             <p>🚫 <b>Account Status:</b> ${searchedUser.isBanned ? '<span style="color:#ef4444; font-weight:bold;">BANNED</span>' : '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>'}</p>
-                            <p>⚡ <b>Mining Plan Status:</b> ${searchedUser.planActive !== false && searchedUser.ghs > 0 ? '<span style="color:#22c55e; font-weight:bold;">ACTIVE (Expires: ' + (searchedUser.planExpiryDate ? new Date(searchedUser.planExpiryDate).toLocaleString() : '15 Days') + ')</span>' : '<span style="color:#ef4444; font-weight:bold;">DEACTIVATED / EXPIRED</span>'}</p>
+                            <p>⚡ <b>Mining Plan Status:</b> ${searchedUser.planActive !== false && searchedUser.ghs > 0 ? '<span style="color:#22c55e; font-weight:bold;">ACTIVE (' + getPlanDaysFormat(searchedUser) + ')</span>' : '<span style="color:#ef4444; font-weight:bold;">DEACTIVATED / EXPIRED</span>'}</p>
                             <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
                             <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span> (<span style="color:#38bdf8;">${userPaidWithdrawCount} Times Paid</span>)</p>
                             <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
@@ -692,7 +708,7 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                                 <input type="number" id="mod-amt" placeholder="Enter USDT amount" style="flex:1; min-width:140px;">
                                 <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">+ Add</button>
                                 <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">- Cut</button>
-                                <button class="btn btn-blue" onclick="togglePlan('${searchedUser.id}', 'activate')">⚡ Activate Plan (15 Days)</button>
+                                <button class="btn btn-blue" onclick="togglePlan('${searchedUser.id}', 'activate')">⚡ Activate Plan (10 Days)</button>
                                 <button class="btn btn-red" onclick="togglePlan('${searchedUser.id}', 'deactivate')">❌ Deactivate Plan</button>
                                 <button class="btn btn-red" onclick="toggleBan('${searchedUser.id}', 'ban')">🚫 Ban User</button>
                                 <button class="btn btn-green" onclick="toggleBan('${searchedUser.id}', 'unban')">✅ Unban User</button>
@@ -837,13 +853,15 @@ app.post('/admin/manage-plan', checkAdminAuth, async (req, res) => {
     if (action === 'activate') {
         u.planActive = true;
         if (u.ghs <= 0) u.ghs = 1;
-        u.planExpiryDate = Date.now() + (15 * 24 * 60 * 60 * 1000);
+        u.planStartDate = Date.now();
+        u.planExpiryDate = Date.now() + (10 * 24 * 60 * 60 * 1000); // 10 Days
         await u.save();
-        sendTelegramMessage(userId, `⚡ *Plan Activated:* Admin ne aapka mining plan 15 Days ke liye activate kar diya hai!`);
+        sendTelegramMessage(userId, `⚡ *Plan Activated:* Admin ne aapka mining plan 10 Days ke liye activate kar diya hai!`);
         res.json({ success: true, message: `Plan activated successfully for user ${userId}!` });
     } else {
         u.planActive = false;
         u.ghs = 0;
+        u.planStartDate = 0;
         u.planExpiryDate = 0;
         await u.save();
         sendTelegramMessage(userId, `❌ *Plan Deactivated:* Admin ne aapka mining plan deactivate kar diya hai.`);
@@ -879,7 +897,8 @@ app.post('/admin/action', checkAdminAuth, async (req, res) => {
             });
             u.ghs = totalApprovedGhs;
             u.planActive = true;
-            u.planExpiryDate = Date.now() + (15 * 24 * 60 * 60 * 1000);
+            u.planStartDate = Date.now();
+            u.planExpiryDate = Date.now() + (10 * 24 * 60 * 60 * 1000); // 10 Days Expiry
 
             await u.save();
 
@@ -919,7 +938,7 @@ app.post('/admin/action', checkAdminAuth, async (req, res) => {
                 }
             }
 
-            sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!\n⚡ +${numericDepAmount} GHS Mining Power added (Valid for 15 Days).`);
+            sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!\n⚡ +${numericDepAmount} GHS Mining Power added (Valid for 10 Days).`);
         } else if (reqDoc.type === 'withdraw' && u) {
             let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
             if (idx !== -1) {
@@ -1058,6 +1077,7 @@ app.get('/api/user/:userId', async (req, res) => {
         user.ghs = 0;
         user.planActive = false;
         user.planExpiryDate = 0;
+        user.planStartDate = 0;
         await user.save();
     }
     res.json(user);
@@ -1097,8 +1117,9 @@ app.post('/api/claim', async (req, res) => {
         u.ghs = 0;
         u.planActive = false;
         u.planExpiryDate = 0;
+        u.planStartDate = 0;
         await u.save();
-        return res.status(400).json({ success: false, message: "Your 15-day mining plan has expired." });
+        return res.status(400).json({ success: false, message: "Your 10-day mining plan has expired." });
     }
 
     let dailyProfit = u.ghs > 0 ? u.ghs * 0.3 : 0.01;
