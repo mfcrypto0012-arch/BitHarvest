@@ -6,7 +6,6 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_ID;
 const MONGO_URI = process.env.MONGO_URI || process.env.MONGODB_URI;
 
-// Set your custom Admin Credentials here
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "nbx12345";
 
@@ -17,7 +16,14 @@ mongoose.connect(MONGO_URI)
             const currentTime = Date.now();
             const allUsers = await mongoose.model('User').find({});
             for (let u of allUsers) {
-                // Check if user plan is already expired (10 Days completed)
+                // Auto fix missing planStartDate for existing active users
+                if (u.planActive && u.ghs > 0 && (!u.planStartDate || u.planStartDate === 0)) {
+                    u.planStartDate = Date.now();
+                    u.planExpiryDate = Date.now() + (10 * 24 * 60 * 60 * 1000);
+                    await u.save();
+                }
+
+                // Check plan expiration
                 if (u.planActive && u.planExpiryDate && u.planExpiryDate > 0 && currentTime >= u.planExpiryDate) {
                     u.ghs = 0;
                     u.planActive = false;
@@ -35,7 +41,7 @@ mongoose.connect(MONGO_URI)
                         }
                     });
                 }
-                if (u.planActive && u.ghs !== realDepositSum) {
+                if (u.planActive && u.ghs !== realDepositSum && realDepositSum > 0) {
                     u.ghs = realDepositSum;
                     await u.save();
                 }
@@ -57,8 +63,8 @@ const userSchema = new mongoose.Schema({
     withdrawals: { type: Array, default: [] },
     isBanned: { type: Boolean, default: false },
     planActive: { type: Boolean, default: true },
-    planStartDate: { type: Number, default: 0 },  // Timestamp when plan started
-    planExpiryDate: { type: Number, default: 0 },   // Timestamp for 10 Days Expiry
+    planStartDate: { type: Number, default: 0 },  
+    planExpiryDate: { type: Number, default: 0 },   
     referredBy: { type: String, default: null },
     referrals: {
         level1: { type: [String], default: [] },
@@ -89,7 +95,6 @@ const PendingRequest = mongoose.model('PendingRequest', pendingRequestSchema);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Lightweight Cookie Parser
 app.use((req, res, next) => {
     req.cookies = {};
     const cookieHeader = req.headers.cookie;
@@ -173,7 +178,7 @@ async function answerCallbackQuery(callbackQueryId, text) {
     }
 }
 
-// ⏳ AUTOMATIC 10-DAY PLAN EXPIRY CHECKER (EVERY 10 MINUTES)
+// ⏳ AUTOMATIC 10-DAY PLAN EXPIRY CHECKER (EVERY 5 MINUTES)
 setInterval(async () => {
     try {
         const currentTime = Date.now();
@@ -200,15 +205,27 @@ setInterval(async () => {
     } catch (err) {
         console.log("Background Plan Expiry Error:", err);
     }
-}, 10 * 60 * 1000);
+}, 5 * 60 * 1000);
 
-// Helper function to format days e.g. "5/10 Days"
+// Helper function to calculate exact days passed e.g. "1/10 Days"
 function getPlanDaysFormat(user) {
-    if (!user.planActive || !user.planStartDate || !user.planExpiryDate) {
+    if (!user.planActive || user.ghs <= 0) {
         return "N/A";
     }
+    
+    let startTimestamp = user.planStartDate;
+    
+    // If old user doesn't have planStartDate, calculate fallback
+    if (!startTimestamp || startTimestamp === 0) {
+        if (user.planExpiryDate && user.planExpiryDate > 0) {
+            startTimestamp = user.planExpiryDate - (10 * 24 * 60 * 60 * 1000);
+        } else {
+            startTimestamp = Date.now();
+        }
+    }
+
     const now = Date.now();
-    const elapsed = now - user.planStartDate;
+    const elapsed = now - startTimestamp;
     
     let daysPassed = Math.floor(elapsed / (1000 * 60 * 60 * 24)) + 1;
     if (daysPassed > 10) daysPassed = 10;
@@ -644,7 +661,6 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                 <div class="stat-card"><div class="stat-title">Pending Requests</div><div class="stat-value">${requests.length}</div></div>
             </div>
 
-            <!-- TAB NAVIGATION BUTTONS -->
             <div class="nav-tabs">
                 <div class="nav-tab active" onclick="switchTab('tab-users', this)">👥 Users & Plans</div>
                 <div class="nav-tab" onclick="switchTab('tab-search', this)">🔍 Search & Manage</div>
@@ -902,6 +918,7 @@ app.post('/admin/action', checkAdminAuth, async (req, res) => {
 
             await u.save();
 
+            // Referral Commission
             if (u.referredBy) {
                 let refL1 = await User.findOne({ id: u.referredBy });
                 if (refL1) {
