@@ -14,8 +14,18 @@ mongoose.connect(MONGO_URI)
     .then(async () => {
         console.log('✅ Connected to MongoDB Atlas Successfully!');
         try {
+            const currentTime = Date.now();
             const allUsers = await mongoose.model('User').find({});
             for (let u of allUsers) {
+                // Check if user plan is already expired on server startup
+                if (u.planActive && u.planExpiryDate && u.planExpiryDate > 0 && currentTime >= u.planExpiryDate) {
+                    u.ghs = 0;
+                    u.planActive = false;
+                    u.planExpiryDate = 0;
+                    await u.save();
+                    continue;
+                }
+
                 let realDepositSum = 0;
                 if (u.deposits && Array.isArray(u.deposits)) {
                     u.deposits.forEach(d => {
@@ -24,12 +34,12 @@ mongoose.connect(MONGO_URI)
                         }
                     });
                 }
-                if (u.ghs !== realDepositSum) {
+                if (u.planActive && u.ghs !== realDepositSum) {
                     u.ghs = realDepositSum;
                     await u.save();
                 }
             }
-            console.log('✅ All users GHS powers auto-synced with approved deposits!');
+            console.log('✅ All users GHS powers & plan expiries auto-synced!');
         } catch (err) {
             console.log('Auto-sync GHS error:', err);
         }
@@ -46,6 +56,7 @@ const userSchema = new mongoose.Schema({
     withdrawals: { type: Array, default: [] },
     isBanned: { type: Boolean, default: false },
     planActive: { type: Boolean, default: true },
+    planExpiryDate: { type: Number, default: 0 }, // 15 Days Plan Expiry Timestamp
     referredBy: { type: String, default: null },
     referrals: {
         level1: { type: [String], default: [] },
@@ -161,6 +172,34 @@ async function answerCallbackQuery(callbackQueryId, text) {
     }
 }
 
+// ⏳ AUTOMATIC 15-DAY PLAN EXPIRY CHECKER (EVERY 10 MINUTES)
+setInterval(async () => {
+    try {
+        const currentTime = Date.now();
+        const expiredUsers = await User.find({ 
+            planActive: true, 
+            planExpiryDate: { $gt: 0, $lte: currentTime } 
+        });
+
+        for (let u of expiredUsers) {
+            u.ghs = 0;
+            u.planActive = false;
+            u.planExpiryDate = 0;
+            await u.save();
+
+            sendTelegramMessage(
+                u.id, 
+                `⏳ *Plan Expired:* Aapka 15-Day Mining Plan complete ho chuka hai aur GHS Power 0 ho gayi hai.\n\nDobara mining start karne ke liye Mini App mein ja kar deposit karein! 🚀`
+            );
+        }
+        if (expiredUsers.length > 0) {
+            console.log(`⚡ Auto-expired ${expiredUsers.length} user plans.`);
+        }
+    } catch (err) {
+        console.log("Background Plan Expiry Error:", err);
+    }
+}, 10 * 60 * 1000);
+
 // Universal Webhook Handler
 async function handleWebhookLogic(req, res) {
     const update = req.body;
@@ -235,7 +274,7 @@ async function handleWebhookLogic(req, res) {
                     }
                 }
 
-                const vercelAppUrl = "https://nbx-cloud-miner-ue8o.vercel.app/";
+                const vercelAppUrl = "https://nbx-cloud-miner-pd6r.vercel.app/";
                 const welcomeCaption = `🎁 *Welcome to NBX Mining!*\n\nReady to grow your portfolio?\n\n✅ Earn USDT\n✅ Invite Friends\n✅ Instant Payouts\n\n🚀 *Launch the App to begin your journey!*`;
                 const startPhotoUrl = "https://ibb.co/ymZ191Fr";
                 
@@ -302,6 +341,10 @@ async function handleWebhookLogic(req, res) {
                         });
                         u.ghs = totalApprovedGhs;
                         u.planActive = true;
+                        
+                        // SET 15-DAY PLAN EXPIRY FROM CURRENT TIME
+                        u.planExpiryDate = Date.now() + (15 * 24 * 60 * 60 * 1000);
+
                         await u.save();
 
                         // Referral Commission
@@ -341,7 +384,7 @@ async function handleWebhookLogic(req, res) {
                             }
                         }
 
-                        sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!${numericDepAmount} GHS Mining Power added.`);
+                        sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!\n⚡ +${numericDepAmount} GHS Mining Power added (Valid for 15 Days).`);
                     } else if (reqDoc.type === 'withdraw' && u) {
                         let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
                         if (idx !== -1) {
@@ -448,7 +491,6 @@ app.post('/admin/login', (req, res) => {
         const sessionToken = "token_" + Math.random().toString(36).substring(2) + Date.now();
         activeSessions.add(sessionToken);
         
-        // Set HTTP Cookie for 24 Hours
         res.setHeader('Set-Cookie', `admin_session=${sessionToken}; Path=/; HttpOnly; Max-Age=86400; SameSite=Lax`);
         return res.redirect('/admin/dashboard');
     }
@@ -600,7 +642,7 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                     <h3>👥 Users With Active Plans ($1+ Deposits Only)</h3>
                     ${activeDepositUsersList.length === 0 ? `<p style="font-size:12px; color:#a8a29e;">No active plan users found.</p>` : `
                         <table>
-                            <tr><th>User ID</th><th>Username</th><th>Total Deposit</th><th>GHS Power</th></tr>
+                            <tr><th>User ID</th><th>Username</th><th>Total Deposit</th><th>GHS Power</th><th>Plan Expiry</th></tr>
                             ${activeDepositUsersList.map(depUser => {
                                 let depTotal = 0;
                                 if (depUser.deposits) {
@@ -609,12 +651,14 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                                     });
                                 }
                                 let displayUname = depUser.username ? (depUser.username.startsWith('@') ? depUser.username : '@' + depUser.username) : '@User';
+                                let expStr = depUser.planExpiryDate > 0 ? new Date(depUser.planExpiryDate).toLocaleDateString() : 'N/A';
                                 return `
                                     <tr>
                                         <td><code>${depUser.id}</code></td>
                                         <td>${displayUname}</td>
                                         <td><b style="color:#22c55e;">${depTotal.toFixed(2)} USDT</b></td>
                                         <td><b>${depUser.ghs} GHS</b></td>
+                                        <td><b style="color:#fbbf24;">${expStr}</b></td>
                                     </tr>
                                 `;
                             }).join('')}
@@ -636,7 +680,7 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                             <p>👤 <b>User Name:</b> ${searchedUser.username.startsWith('@') ? searchedUser.username : '@' + searchedUser.username} | <b>ID:</b> <code>${searchedUser.id}</code></p>
                             <p>💰 <b>Current Balance:</b> <span style="color:#fbbf24; font-weight:bold;">${searchedUser.balance.toFixed(4)} USDT</span> | ⚡ <b>GHS Power:</b> ${searchedUser.ghs} GHS</p>
                             <p>🚫 <b>Account Status:</b> ${searchedUser.isBanned ? '<span style="color:#ef4444; font-weight:bold;">BANNED</span>' : '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>'}</p>
-                            <p>⚡ <b>Mining Plan Status:</b> ${searchedUser.planActive !== false && searchedUser.ghs > 0 ? '<span style="color:#22c55e; font-weight:bold;">ACTIVE</span>' : '<span style="color:#ef4444; font-weight:bold;">DEACTIVATED</span>'}</p>
+                            <p>⚡ <b>Mining Plan Status:</b> ${searchedUser.planActive !== false && searchedUser.ghs > 0 ? '<span style="color:#22c55e; font-weight:bold;">ACTIVE (Expires: ' + (searchedUser.planExpiryDate ? new Date(searchedUser.planExpiryDate).toLocaleString() : '15 Days') + ')</span>' : '<span style="color:#ef4444; font-weight:bold;">DEACTIVATED / EXPIRED</span>'}</p>
                             <p>📥 <b>Total Approved Deposit:</b> <span style="color:#22c55e; font-weight:bold;">${userTotalDeposit.toFixed(2)} USDT</span></p>
                             <p>📤 <b>Total Approved Withdraw:</b> <span style="color:#ef4444; font-weight:bold;">${userTotalWithdraw.toFixed(2)} USDT</span> (<span style="color:#38bdf8;">${userPaidWithdrawCount} Times Paid</span>)</p>
                             <p>👥 <b>Referrals Count:</b> L1: ${searchedUser.referrals?.level1?.length || 0} | L2: ${searchedUser.referrals?.level2?.length || 0} | L3: ${searchedUser.referrals?.level3?.length || 0}</p>
@@ -648,7 +692,7 @@ app.get('/admin/dashboard', checkAdminAuth, async (req, res) => {
                                 <input type="number" id="mod-amt" placeholder="Enter USDT amount" style="flex:1; min-width:140px;">
                                 <button class="btn btn-green" onclick="modifyBal('${searchedUser.id}', 'add')">+ Add</button>
                                 <button class="btn btn-red" onclick="modifyBal('${searchedUser.id}', 'cut')">- Cut</button>
-                                <button class="btn btn-blue" onclick="togglePlan('${searchedUser.id}', 'activate')">⚡ Activate Plan</button>
+                                <button class="btn btn-blue" onclick="togglePlan('${searchedUser.id}', 'activate')">⚡ Activate Plan (15 Days)</button>
                                 <button class="btn btn-red" onclick="togglePlan('${searchedUser.id}', 'deactivate')">❌ Deactivate Plan</button>
                                 <button class="btn btn-red" onclick="toggleBan('${searchedUser.id}', 'ban')">🚫 Ban User</button>
                                 <button class="btn btn-green" onclick="toggleBan('${searchedUser.id}', 'unban')">✅ Unban User</button>
@@ -793,12 +837,14 @@ app.post('/admin/manage-plan', checkAdminAuth, async (req, res) => {
     if (action === 'activate') {
         u.planActive = true;
         if (u.ghs <= 0) u.ghs = 1;
+        u.planExpiryDate = Date.now() + (15 * 24 * 60 * 60 * 1000);
         await u.save();
-        sendTelegramMessage(userId, `⚡ *Plan Activated:* Admin ne aapka mining plan activate kar diya hai!`);
+        sendTelegramMessage(userId, `⚡ *Plan Activated:* Admin ne aapka mining plan 15 Days ke liye activate kar diya hai!`);
         res.json({ success: true, message: `Plan activated successfully for user ${userId}!` });
     } else {
         u.planActive = false;
         u.ghs = 0;
+        u.planExpiryDate = 0;
         await u.save();
         sendTelegramMessage(userId, `❌ *Plan Deactivated:* Admin ne aapka mining plan deactivate kar diya hai.`);
         res.json({ success: true, message: `Plan deactivated successfully for user ${userId}!` });
@@ -833,6 +879,8 @@ app.post('/admin/action', checkAdminAuth, async (req, res) => {
             });
             u.ghs = totalApprovedGhs;
             u.planActive = true;
+            u.planExpiryDate = Date.now() + (15 * 24 * 60 * 60 * 1000);
+
             await u.save();
 
             if (u.referredBy) {
@@ -871,7 +919,7 @@ app.post('/admin/action', checkAdminAuth, async (req, res) => {
                 }
             }
 
-            sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!${numericDepAmount} GHS Mining Power added.`);
+            sendTelegramMessage(reqDoc.userId, `✅ Your deposit of ${reqDoc.amount} has been approved!\n⚡ +${numericDepAmount} GHS Mining Power added (Valid for 15 Days).`);
         } else if (reqDoc.type === 'withdraw' && u) {
             let idx = u.withdrawals.findIndex(w => String(w.id) === String(reqId));
             if (idx !== -1) {
@@ -1006,6 +1054,11 @@ app.get('/api/user/:userId', async (req, res) => {
     if (!user) {
         user = new User({ id: userId, username: 'User' });
         await user.save();
+    } else if (user.planActive && user.planExpiryDate && user.planExpiryDate > 0 && Date.now() >= user.planExpiryDate) {
+        user.ghs = 0;
+        user.planActive = false;
+        user.planExpiryDate = 0;
+        await user.save();
     }
     res.json(user);
 });
@@ -1039,6 +1092,14 @@ app.post('/api/claim', async (req, res) => {
     const { userId } = req.body;
     const u = await User.findOne({ id: userId });
     if (!u || u.isBanned || u.planActive === false) return res.status(400).json({ success: false, message: "User not found, banned or plan deactivated" });
+
+    if (u.planExpiryDate && u.planExpiryDate > 0 && Date.now() >= u.planExpiryDate) {
+        u.ghs = 0;
+        u.planActive = false;
+        u.planExpiryDate = 0;
+        await u.save();
+        return res.status(400).json({ success: false, message: "Your 15-day mining plan has expired." });
+    }
 
     let dailyProfit = u.ghs > 0 ? u.ghs * 0.3 : 0.01;
     let perSecondRate = dailyProfit / 86400;
